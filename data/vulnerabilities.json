@@ -1,0 +1,69 @@
+{
+  "patterns": [
+    {
+      "id": "VP001",
+      "name": "Oracle Manipulation",
+      "description": "合约使用可被操纵的价格数据源，如直接从DEX读取即时价格或依赖单一低流动性池作为预言机",
+      "indicators": ["直接读取pair.reserve计算价格", "使用block.timestamp作为唯一时间戳", "未使用TWAP或多源价格验证", "依赖单一价格源", "低流动性池作为价格预言机", "价格偏差未设置阈值检查", "fallback预言机使用DEX即时价格"],
+      "severity": "Critical",
+      "mitigation": "使用Chainlink等去中心化预言机；实施TWAP机制；采用多源价格验证；设置价格波动阈值；检查预言机心跳和价格时效性；对低流动性资产使用时间加权价格"
+    },
+    {
+      "id": "VP002",
+      "name": "Flash Loan Attack",
+      "description": "合约在单笔交易中可被闪电贷操纵，缺乏跨区块验证机制或依赖可在同一交易中被操控的参数",
+      "indicators": ["无多区块确认机制", "依赖可被闪电贷影响的参数", "缺少交易间隔检查", "同一交易内多次调用敏感函数", "mint/burn价格依赖可操控的现货价格", "单笔交易内完成借款-操纵-获利循环"],
+      "severity": "Critical",
+      "mitigation": "实施多区块确认机制；限制单笔交易内的操作次数；使用闪电贷保护模块；对关键操作添加时间锁；在价格更新后延迟执行敏感操作"
+    },
+    {
+      "id": "VP003",
+      "name": "Reserve Manipulation",
+      "description": "攻击者可通过操纵流动性池储备金比例或利用储备金计算中的逻辑缺陷获利",
+      "indicators": ["直接使用reserve计算兑换比例", "无储备金变化限制", "可被大额交易影响计算结果", "缺少储备金验证", "transfer路径可操控pair余额", "skim()/sync()可被恶意利用"],
+      "severity": "High",
+      "mitigation": "实施储备金变化限制；使用内部平衡追踪；添加储备金验证机制；限制直接转账对池的影响；对skim/sync操作添加访问控制"
+    },
+    {
+      "id": "VP004",
+      "name": "Price Calculation Flaw",
+      "description": "价格计算公式存在数学漏洞，如精度损失、整数溢出、小数缩放错误或地板除法问题",
+      "indicators": ["使用整数除法计算价格", "未使用高精度数学库", "缺少边界检查", "除法顺序可能导致精度损失", "小数缩放重复乘以1e18", "地板除法可被操控到零", "burn机制不当影响价格计算"],
+      "severity": "High",
+      "mitigation": "使用高精度数学库（如PRBMath）；先乘后除避免精度损失；添加边界检查；对小数缩放进行双重验证；对除法操作添加零值保护"
+    },
+    {
+      "id": "VP005",
+      "name": "Liquidity Pool Manipulation",
+      "description": "合约与流动性池交互时存在漏洞，如LP代币铸造逻辑缺陷、添加/移除流动性操作不当或访问控制缺失",
+      "indicators": ["直接操作LP代币", "未验证流动性池状态", "添加/移除流动性逻辑缺陷", "无常损失处理不当", "LP移除函数可被滥用", "Uniswap V4 Hook缺少访问控制", "奖励分配逻辑可被重复领取"],
+      "severity": "High",
+      "mitigation": "验证流动性池状态；使用标准Router合约；添加流动性操作保护；对Hook添加访问控制验证；隔离奖励账户状态；使用CREATE2防护"
+    },
+    {
+      "id": "VP006",
+      "name": "Slippage Control Bypass",
+      "description": "滑点保护机制可被绕过或操控，包括swap参数被恶意利用执行未授权的transferFrom",
+      "indicators": ["用户可设置过大滑点", "滑点计算基准可被操纵", "无滑点上限限制", "滑点参数可被抢跑修改", "swap参数可被恶意构造执行transferFrom", "路由器合约获批后被利用"],
+      "severity": "Medium",
+      "mitigation": "设置合理的滑点上限；使用不可操纵的滑点基准；实施滑点保护机制；验证swap参数合法性；限制路由器合约的转账权限"
+    },
+    {
+      "id": "VP007",
+      "name": "TWAP Manipulation",
+      "description": "TWAP实现存在漏洞，如窗口过短、流动性不足的池作为预言机或可被选择性更新",
+      "indicators": ["TWAP周期小于30分钟", "仅使用2个区块数据", "可被选择性更新", "可被提前交易操纵", "低流动性池作为TWAP数据源", "流动性衰减导致预言机可被操控"],
+      "severity": "Medium",
+      "mitigation": "足够长的TWAP窗口（建议30分钟以上）；多区块确认；异常价格检测；监控池流动性水平；当流动性低于阈值时暂停使用预言机"
+    },
+    {
+      "id": "VP008",
+      "name": "AMM Exploitation",
+      "description": "AMM机制特性可被利用进行攻击，如重入漏洞操纵全局平均价格、三明治攻击或精度损失利用",
+      "indicators": ["依赖AMM恒定乘积公式", "未考虑三明治攻击", "交易顺序可被操纵", "缺少私有交易池支持", "重入可操纵全局平均价格", "批量swap可操控池状态和内部余额"],
+      "severity": "High",
+      "mitigation": "交易排序保护；交易延迟机制；私有交易池；三明治攻击检测；添加重入保护；对批量操作添加状态一致性检查"
+    }
+  ],
+  "lastUpdated": "2026-03-05T00:00:00.000Z"
+}

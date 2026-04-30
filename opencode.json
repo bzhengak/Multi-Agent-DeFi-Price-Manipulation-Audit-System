@@ -1,0 +1,90 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "zhipu/glm-5.1",
+  "small_model": "zhipu/glm-5-turbo",
+  "provider": {
+    "zhipu": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Zhipu GLM",
+      "options": {
+        "baseURL": "https://open.bigmodel.cn/api/paas/v4",
+        "apiKey": "{env:ZHIPU_API_KEY}"
+      },
+      "models": {
+        "glm-5.1": {
+          "name": "GLM-5.1",
+          "limit": {
+            "context": 128000,
+            "output": 16384
+          }
+        },
+        "glm-5-turbo": {
+          "name": "GLM-5 Turbo",
+          "limit": {
+            "context": 128000,
+            "output": 8192
+          }
+        }
+      }
+    }
+  },
+  "instructions": [
+    "docs/agent-upgrade-spec.md",
+    "docs/price-manipulation-patterns.md",
+    "docs/protocol-classification-mapping.md"
+  ],
+  "mcp": {
+    "filesystem": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "./src", "./data", "./docs"],
+      "enabled": true,
+      "timeout": 10000
+    },
+    "github": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-github"],
+      "environment": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "{env:GITHUB_TOKEN}"
+      },
+      "enabled": false,
+      "timeout": 15000
+    },
+    "fetch": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-fetch"],
+      "enabled": true,
+      "timeout": 30000
+    },
+    "brave-search": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-brave-search"],
+      "environment": {
+        "BRAVE_API_KEY": "{env:BRAVE_API_KEY}"
+      },
+      "enabled": false,
+      "timeout": 15000
+    }
+  },
+  "lsp": {
+    "typescript": {
+      "disabled": false,
+      "command": ["typescript-language-server", "--stdio"]
+    }
+  },
+  "tools": {
+    "write": true,
+    "bash": true
+  },
+  "permission": {
+    "edit": "ask",
+    "bash": "ask"
+  },
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 10000
+  },
+  "watcher": {
+    "ignore": ["node_modules/**", ".next/**", ".storage/**", "dist/**"]
+  }
+}

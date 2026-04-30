@@ -1,0 +1,34 @@
+# Render Blueprint - DeFi Price Manipulation Analyzer v2.0
+# Deploy with: render blueprint deploy
+# Or connect GitHub repo at https://dashboard.render.com
+
+services:
+  - type: web
+    name: defi-analyzer
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: main
+    buildCommand: npm install && npm run build
+    startCommand: node .next/standalone/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: USER_PASSWORD_HASH
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ETHERSCAN_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        sync: false
+      - key: LLM_MODEL
+        value: deepseek-chat
+      - key: ZHIPU_API_KEY
+        sync: false
+    disk:
+      name: defi-storage
+      mountPath: /opt/render/project/src/.storage
+      sizeGB: 1

@@ -1,0 +1,28 @@
+# ============================================
+# DeFi Price Manipulation Analyzer - Docker Compose
+# ============================================
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # Authentication
+      - USER_PASSWORD_HASH=admin123
+      - JWT_SECRET=change-me-to-a-random-string-in-production
+      # Etherscan V2 API
+      - ETHERSCAN_API_KEY=
+      # LLM Configuration (choose ONE mode)
+      # Mode A: Z.ai Platform (default, no config needed)
+      # Mode B: OpenAI-compatible API
+      - OPENAI_API_KEY=
+      - OPENAI_BASE_URL=
+      - LLM_MODEL=gpt-4o-mini
+    volumes:
+      - app-storage:/app/.storage
+    restart: unless-stopped
+
+volumes:
+  app-storage:
