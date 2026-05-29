@@ -63,6 +63,11 @@
       },
       "enabled": false,
       "timeout": 15000
+    },
+    "drawio": {
+      "type": "local",
+      "command": ["npx", "-y", "@drawio/mcp", "--editor"],
+      "enabled": false
     }
   },
   "lsp": {

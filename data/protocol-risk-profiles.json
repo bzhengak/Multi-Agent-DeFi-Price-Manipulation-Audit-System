@@ -1,0 +1,47 @@
+{
+  "dex_amm": {
+    "priorityVulns": ["OD-01", "OD-02", "OD-03", "LR-01", "LR-03", "TO-01", "TO-02", "TO-03", "CL-01", "CL-03", "CR-03"],
+    "flashloanExposure": true,
+    "oracleDependency": true
+  },
+  "lending": {
+    "priorityVulns": ["OD-01", "OD-02", "OD-03", "LR-01", "LR-02", "TO-01", "TO-03", "CL-02", "CR-01"],
+    "flashloanExposure": true,
+    "oracleDependency": true
+  },
+  "perp": {
+    "priorityVulns": ["OD-01", "OD-02", "OD-03", "LR-01", "LR-02", "TO-01", "TO-02", "CL-02", "CR-01", "CR-03"],
+    "flashloanExposure": true,
+    "oracleDependency": true
+  },
+  "yield_aggregator": {
+    "priorityVulns": ["LR-01", "LR-03", "TO-01", "CR-01", "CR-02", "CR-03"],
+    "flashloanExposure": true,
+    "oracleDependency": false
+  },
+  "bridge": {
+    "priorityVulns": ["LR-03", "CL-02", "CR-01", "CR-02", "CR-03", "AC-02"],
+    "flashloanExposure": false,
+    "oracleDependency": false
+  },
+  "stablecoin": {
+    "priorityVulns": ["OD-01", "OD-02", "OD-03", "LR-03", "TO-01", "AC-02", "AC-03", "CR-01"],
+    "flashloanExposure": true,
+    "oracleDependency": true
+  },
+  "options": {
+    "priorityVulns": ["OD-01", "OD-03", "CL-02"],
+    "flashloanExposure": false,
+    "oracleDependency": true
+  },
+  "liquid_staking": {
+    "priorityVulns": ["OD-01", "OD-02", "LR-01", "CR-01"],
+    "flashloanExposure": false,
+    "oracleDependency": true
+  },
+  "unknown": {
+    "priorityVulns": ["OD-01", "OD-02", "LR-01", "TO-01", "TO-02"],
+    "flashloanExposure": false,
+    "oracleDependency": false
+  }
+}

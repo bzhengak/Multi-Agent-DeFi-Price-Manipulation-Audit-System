@@ -1,11 +1,12 @@
 export type ProtocolType =
-  | 'dex'
-  | 'amm'
+  | 'dex_amm'
   | 'lending'
   | 'perp'
   | 'yield_aggregator'
   | 'bridge'
   | 'stablecoin'
+  | 'options'
+  | 'liquid_staking'
   | 'unknown';
 
 export type ManipulationTarget =

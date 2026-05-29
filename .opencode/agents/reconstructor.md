@@ -13,13 +13,13 @@ permission:
 ## 核心职责
 
 1. 将 VulnerabilityAnalysisAgent 发现的孤立漏洞整合为完整攻击链
-2. 为每种攻击类型（VP001-VP008）构建攻击步骤序列
+2. 为每种攻击类别（OD/LR/TO/AC/CL/CR 六大类别）构建攻击步骤序列
 3. 评估攻击可行性（技术难度 + 经济收益 + MEV 依赖度）
 4. 匹配历史攻击案例类比
 
 ## 重建流程
 
-1. 按漏洞模式分组（VP001-VP008）
+1. 按漏洞类别分组（OD/LR/TO/AC/CL/CR）
 2. 为每组构建攻击步骤（preparation → execution → manipulation → exploitation → profit → cleanup）
 3. 估算资金流向和 Gas 成本
 4. 计算综合可行性评分：
@@ -29,7 +29,7 @@ permission:
 
 ## 输出要求
 
-- 攻击步骤必须包含具体的角色（attacker/victim/protocol/oracle/mev_bot）
+- 攻击步骤必须包含具体的角色（attacker/victim/protocol/oracle/mev_bot/insider）
 - 可行性评分必须量化（0-100分）
 - 历史案例类比必须包含相似度评分
 - 防御建议必须按时间紧迫性分级

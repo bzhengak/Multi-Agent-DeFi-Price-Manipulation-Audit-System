@@ -6,7 +6,7 @@
 
 ## 项目概述
 
-本项目是将 **DeFi 价格操纵分析审计系统** 从固定流水线（Workflow）升级为智能多 Agent 协作系统的工程。当前系统采用线性 3 阶段流水线（源码获取→漏洞分析→报告生成），升级后将具备动态决策、深度推理、攻击还原和风险量化能力，聚焦于 **VP001-VP008** 八种价格操纵攻击模式的检测与分析。
+本项目是将 **DeFi 价格操纵分析审计系统** 从固定流水线（Workflow）升级为智能多 Agent 协作系统的工程。当前系统采用线性 3 阶段流水线（源码获取→漏洞分析→报告生成），升级后将具备动态决策、深度推理、攻击还原和风险量化能力，聚焦于 **19 种价格操纵攻击模式 (6 大类别)** 的检测与分析。
 
 ### 核心架构转变
 
@@ -36,8 +36,8 @@
 - **Agent 框架**：自研 BaseAgent 抽象类（Observe-Think-Act-Update 循环）
 - **工具注册**：ToolRegistry 工具管理中心（含重试、缓存策略）
 - **记忆系统**：MemorySystem（工作记忆/情景记忆/语义记忆三层架构）
-- **协议识别**：ProtocolTypeDetector（7种DeFi协议自动识别）
-- **攻击重建**：PriceManipulationReconstructor（VP001-VP008攻击叙事生成）
+- **协议识别**：ProtocolTypeDetector（8种DeFi协议自动识别）
+- **攻击重建**：PriceManipulationReconstructor（19种攻击模式攻击叙事生成）
 - **置信度校准**：ConfidenceCalibrator（多维置信度评估与校准）
 
 ---
@@ -56,10 +56,8 @@
 - [ ] 实现 ContextManager 针对性分析上下文构建
 - [ ] 实现 VulnerabilityAnalysisAgent 多轮迭代漏洞分析
 - [ ] 实现 PromptOptimizer 提示词优化模块
-- [ ] 集成现有漏洞模式库（VP001-VP008）
+- [ ] 集成现有漏洞模式库（OD-01~CR-04, 6大类21种模式）
 
-### 阶段三：攻击重建与评估（Phase 3 - Reconstruction & Calibration）
-- [ ] 实现 PriceManipulationReconstructor 攻击重建引擎
 - [ ] 实现 VP001-VP008 八种攻击模式的重建逻辑
 - [ ] 实现 ConfidenceCalibrator 置信度校准机制
 - [ ] 实现攻击可行性评估（技术/经济/MEV依赖度）
@@ -138,7 +136,7 @@ src/
     └── utils.ts                      # 工具函数
 data/
 ├── history.json                      # 33个真实DeFi攻击案例
-└── vulnerabilities.json              # 8个漏洞模式定义（VP001-VP008）
+└── vulnerabilities.json              # 19个漏洞模式定义（OD-01~CR-03）
 docs/                                 # ⭐ 项目文档（新增）
 ├── agent-upgrade-spec.md             # Agent 升级详细技术规格
 ├── price-manipulation-patterns.md    # 价格操纵攻击类型体系
@@ -225,29 +223,28 @@ curl -X POST http://localhost:3000/api/init
 
 ## 价格操纵攻击类型体系
 
-系统聚焦的8种价格操纵攻击类型，所有分析逻辑必须覆盖：
+系统聚焦的19种价格操纵攻击类型（6大类别），所有分析逻辑必须覆盖：
 
-| 模式 | 类型 | 核心原理 | 优先检测协议 |
-|------|------|---------|-------------|
-| VP001 | Oracle Manipulation | 操纵预言机价格源 | DEX, AMM, Perp, Lending |
-| VP002 | Flash Loan Attack | 单笔交易内借用大量无抵押资金 | DEX, AMM, Perp, Lending, Yield |
-| VP003 | Reserve Manipulation | 修改或谎报储备金数据 | Lending, Bridge |
-| VP004 | Price Calculation Flaw | 利用数学计算错误或精度问题 | Perp, Lending |
-| VP005 | Liquidity Pool Manipulation | 操纵流动性池状态 | AMM, DEX |
-| VP006 | Slippage Bypass | 利用滑点限制不足进行MEV攻击 | AMM, DEX, Perp |
-| VP007 | TWAP Manipulation | 多区块交易操纵TWAP指标 | AMM, DEX |
-| VP008 | AMM Exploitation | 利用AMM数学不变量或边界条件 | AMM, DEX |
+| 类别 | 关键ID | 核心原理 | 优先检测协议 |
+|------|--------|---------|-------------|
+| Oracle Dependency | OD-01~04 | 预言机价格源可被操纵 | DEX, AMM, Perp, Lending |
+| Liquidity & Reserve | LR-01~03 | 流动性与储备可操纵性 | AMM, DEX, Lending |
+| Transaction Ordering | TO-01~03 | 交易排序与时序依赖 | AMM, DEX, Perp |
+| Access Control | AC-01~03 | 访问控制与特权风险 | All |
+| Calculation Logic | CL-01~03 | 计算逻辑缺陷 | AMM, DEX, Perp |
+| Composability | CR-01~03 | 可组合性风险 | Lending, Perp, Yield, Bridge |
 
 ### 协议类型映射（ProtocolTypeDetector 使用的映射）
 
 协议识别后自动关联优先检测的漏洞模式：
-- **DEX**: VP001, VP005, VP006, VP007, VP008
-- **AMM**: VP001, VP007, VP008, VP005, VP006
-- **Lending**: VP001, VP002, VP003, VP004
-- **Perp**: VP001, VP002, VP004, VP006
-- **Yield Aggregator**: VP002, VP003, VP006
-- **Bridge**: VP003, VP004, VP008
-- **Stablecoin**: VP001, VP002, VP003
+- **DEX/AMM**: OD-01, OD-02, OD-03, LR-01, LR-03, TO-01, TO-02, TO-03, CL-01, CL-03, CR-03
+- **Lending**: OD-01, OD-02, OD-03, LR-01, LR-02, TO-01, TO-03, CL-02, CR-01
+- **Perp**: OD-01, OD-02, OD-03, LR-01, LR-02, TO-01, TO-02, CL-02, CR-01, CR-03
+- **Yield Aggregator**: LR-01, LR-03, TO-01, CR-01, CR-02, CR-03
+- **Bridge**: LR-03, CL-02, CR-01, CR-02, CR-03, AC-02
+- **Stablecoin**: OD-01, OD-02, OD-03, LR-03, TO-01, AC-02, AC-03, CR-01
+- **Options**: OD-01, OD-03, CL-02
+- **Liquid Staking**: OD-01, OD-02, LR-01, CR-01
 
 ---
 

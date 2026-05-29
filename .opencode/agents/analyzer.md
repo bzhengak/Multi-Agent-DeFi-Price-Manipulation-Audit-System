@@ -1,5 +1,5 @@
 ---
-description: DeFi 漏洞分析专家，聚焦 VP001-VP008 价格操纵攻击模式检测
+description: DeFi 漏洞分析专家，聚焦 19 种价格操纵攻击模式 (6大类别) 检测
 mode: subagent
 model: zhipu/glm-5.1
 temperature: 0.1
@@ -12,7 +12,7 @@ permission:
 
 ## 核心职责
 
-1. 分析 Solidity 智能合约源码，识别 VP001-VP008 八种价格操纵攻击模式
+1. 分析 Solidity 智能合约源码，识别 OD-01~CR-03 六大类别共19种价格操纵攻击模式
 2. 根据协议类型（DEX/AMM/Lending/Perp/Bridge/Yield/Stablecoin）调整检测优先级
 3. 多轮迭代分析，逐步深化结论，不满足于单轮扫描结果
 4. 关联孤立漏洞为组合攻击场景
@@ -32,4 +32,4 @@ permission:
 
 - 每个漏洞必须包含精确的代码位置（文件名、行号、函数名）
 - 严重度评估必须基于攻击可行性和影响范围，而非仅看代码模式
-- 所有发现必须匹配到 VP001-VP008 中的具体模式编号
+- 所有发现必须匹配到 OD-01~CR-03 中的具体模式编号

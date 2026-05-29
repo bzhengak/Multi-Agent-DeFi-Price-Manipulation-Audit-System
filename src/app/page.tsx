@@ -73,11 +73,12 @@ interface ReportData {
 
 interface VulnerabilityPattern {
   id: string;
+  category: string;
   name: string;
-  description: string;
-  indicators: string[];
-  severity: 'Critical' | 'High' | 'Medium' | 'Low';
-  mitigation: string;
+  code_features: string[];
+  related_attacks: string[];
+  severity: 'Critical' | 'High' | 'Medium';
+  references?: { swc: string; owasp: string };
 }
 
 // --- API Helpers ---
@@ -1076,15 +1077,14 @@ function PatternsPage() {
     Critical: patterns.filter(p => p.severity === 'Critical').length,
     High: patterns.filter(p => p.severity === 'High').length,
     Medium: patterns.filter(p => p.severity === 'Medium').length,
-    Low: patterns.filter(p => p.severity === 'Low').length,
   }), [patterns]);
 
-  const maxCount = Math.max(severityCounts.Critical, severityCounts.High, severityCounts.Medium, severityCounts.Low, 1);
+  const maxCount = Math.max(severityCounts.Critical, severityCounts.High, severityCounts.Medium, 1);
 
   const filteredPatterns = useMemo(() => {
     if (!searchFilter) return patterns;
     const q = searchFilter.toLowerCase();
-    return patterns.filter(p => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
+    return patterns.filter(p => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.category.toLowerCase().includes(q));
   }, [patterns, searchFilter]);
 
   if (loading) {
@@ -1100,7 +1100,7 @@ function PatternsPage() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">漏洞模式库</h1>
-          <p className="text-slate-400 text-sm mt-1">8种已识别的DeFi价格操纵漏洞模式 (VP001-VP008)</p>
+          <p className="text-slate-400 text-sm mt-1">21种已识别的DeFi价格操纵漏洞模式 (6大类别)</p>
         </div>
         <div className="relative w-full sm:w-64">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -1122,7 +1122,6 @@ function PatternsPage() {
             { label: 'Critical', count: severityCounts.Critical, color: 'bg-red-500', textColor: 'text-red-400' },
             { label: 'High', count: severityCounts.High, color: 'bg-orange-500', textColor: 'text-orange-400' },
             { label: 'Medium', count: severityCounts.Medium, color: 'bg-yellow-500', textColor: 'text-yellow-400' },
-            { label: 'Low', count: severityCounts.Low, color: 'bg-sky-500', textColor: 'text-sky-400' },
           ].map((item) => (
             <div key={item.label} className="flex items-center gap-3">
               <span className={`text-sm font-medium w-16 ${item.textColor}`}>{item.label}</span>
@@ -1185,7 +1184,7 @@ function PatternsPage() {
               >
                 <div className="flex items-center gap-4">
                   <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
-                    <span className="text-xs font-mono text-emerald-400 font-bold">{pattern.id.replace('VP00', '')}</span>
+                    <span className="text-xs font-mono text-emerald-400 font-bold">{pattern.id}</span>
                   </div>
                   <span className="text-sm font-mono text-emerald-400 font-semibold">{pattern.id}</span>
                   <h3 className="text-white font-semibold">{pattern.name}</h3>
@@ -1207,24 +1206,30 @@ function PatternsPage() {
                   >
                     <div className="px-5 pb-5 border-t border-slate-700/30 pt-4 space-y-4">
                       <div>
-                        <label className="text-xs text-slate-500 font-medium uppercase tracking-wide">描述</label>
-                        <p className="text-sm text-slate-300 mt-1">{pattern.description}</p>
+                        <label className="text-xs text-slate-500 font-medium uppercase tracking-wide">类别</label>
+                        <p className="text-sm text-slate-300 mt-1">{pattern.category}</p>
                       </div>
                       <div>
-                        <label className="text-xs text-slate-500 font-medium uppercase tracking-wide">指标</label>
+                        <label className="text-xs text-slate-500 font-medium uppercase tracking-wide">代码特征</label>
                         <ul className="mt-2 space-y-1.5">
-                          {pattern.indicators.map((indicator, i) => (
+                          {pattern.code_features.map((feature: string, i: number) => (
                             <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
                               <ChevronRight className="w-3 h-3 text-emerald-400 mt-1 shrink-0" />
-                              {indicator}
+                              {feature}
                             </li>
                           ))}
                         </ul>
                       </div>
-                      <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4">
-                        <label className="text-xs text-emerald-400/70 font-medium uppercase tracking-wide">缓解措施</label>
-                        <p className="text-sm text-emerald-300 mt-1">{pattern.mitigation}</p>
+                      <div className="bg-orange-500/5 border border-orange-500/20 rounded-xl p-4">
+                        <label className="text-xs text-orange-400/70 font-medium uppercase tracking-wide">关联攻击类型</label>
+                        <p className="text-sm text-orange-300 mt-1">{pattern.related_attacks.join(', ')}</p>
                       </div>
+                      {pattern.references && (
+                        <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
+                          <label className="text-xs text-blue-400/70 font-medium uppercase tracking-wide">合规溯源</label>
+                          <p className="text-sm text-blue-300 mt-1">{pattern.references.swc} · {pattern.references.owasp}</p>
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}

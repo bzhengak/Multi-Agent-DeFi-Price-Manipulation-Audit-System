@@ -28,7 +28,7 @@ export const REPORT_SYSTEM_PROMPT = `你是一位专业的区块链安全审计�
 
 #### 3.x [VP-XXX] 漏洞标题
 - **漏洞ID**：如 VULN-001
-- **漏洞分类**：模式ID和名称（如 VP001 - Oracle Manipulation）
+- **漏洞分类**：模式ID和名称（如 OD-01 - Spot Price Directly Used as Pricing Basis）
 - **严重等级**：🔴 Critical / 🟠 High / 🟡 Medium / 🟢 Low / ⚪ Informational
 - **漏洞描述**：
   - 问题根因：为什么存在这个漏洞
@@ -54,6 +54,18 @@ export const REPORT_SYSTEM_PROMPT = `你是一位专业的区块链安全审计�
   - **推荐方案**：具体的代码修改方案，包含修复前后的代码对比
   - **替代方案**：其他可行的修复方式
   - **验证方法**：修复后如何验证漏洞已被消除
+- **攻击成本估算 (attack_cost_estimate)**：
+  - 所需闪电贷规模 (ETH/USD)
+  - 估算Gas成本 (ETH)
+  - 声明此估算为LLM基于典型DeFi攻击规模的近似值
+- **修复时效 (remediation_timeline)**：
+  - Critical → 建议24小时内修复
+  - High → 建议7天内修复
+  - Medium/Low → 建议纳入常规Sprint周期
+- **合规溯源 (knowledge_references)**：
+  - SWC ID（如 SWC-123）
+  - OWASP 类别（如 SC03:2026）
+  - 从漏洞模式的 references 字段获取
 
 ### 4. Risk Matrix（风险矩阵）
 
@@ -69,7 +81,7 @@ export const REPORT_SYSTEM_PROMPT = `你是一位专业的区块链安全审计�
 #### 4.2 按漏洞模式分布
 | 漏洞模式 | 数量 | 最高严重等级 |
 |---------|------|------------|
-| VP001 - Oracle Manipulation | X | Critical |
+| OD-01 - Spot Price Used Directly | X | Critical |
 | ... | ... | ... |
 
 #### 4.3 修复优先级排序

@@ -1,6 +1,5 @@
 import type { PriceManipulationAttack, AttackStep, FundFlow, DefenseRecommendation, DifficultyLevel } from './types';
 import type { ProtocolClassification } from '../protocols/types';
-import { VULNERABILITY_SYSTEM_PROMPT } from '../../prompts/vulnerability';
 
 type Vuln = {
   patternId: string;
@@ -12,132 +11,70 @@ type Vuln = {
   recommendation: string;
 };
 
-const ATTACK_TEMPLATES: Record<string, {
+function getCategoryPrefix(patternId: string): string {
+  return patternId.substring(0, 2);
+}
+
+const CATEGORY_TEMPLATES: Record<string, {
   name: string;
   steps: (vuln: Vuln) => AttackStep[];
   fundFlow: () => FundFlow[];
   defenses: () => DefenseRecommendation;
   difficulty: DifficultyLevel;
 }> = {
-  VP001: {
-    name: 'Oracle Manipulation',
+  OD: {
+    name: 'Oracle Dependency Exploit',
     steps: (v) => [
-      { phase: 'preparation', actor: 'attacker', action: 'Obtain flash loan from lending protocol', target: 'Flash loan provider', expectedOutcome: 'Large capital available in single transaction' },
-      { phase: 'execution', actor: 'attacker', action: 'Execute large swap to distort DEX pool price', target: 'DEX liquidity pool', expectedOutcome: 'Oracle price deviates significantly from true value' },
-      { phase: 'manipulation', actor: 'oracle', action: 'Protocol reads manipulated spot price from pool', target: 'Price oracle', expectedOutcome: 'Contract operates on false price data' },
-      { phase: 'exploitation', actor: 'attacker', action: v.attackVector || 'Exploit price discrepancy for profit', target: 'Vulnerable contract', expectedOutcome: 'Favorable trade/mint/borrow at manipulated price' },
+      { phase: 'preparation', actor: 'attacker', action: 'Obtain flash loan or accumulate capital', target: 'Flash loan provider / DEX', expectedOutcome: 'Large capital available for manipulation' },
+      { phase: 'execution', actor: 'attacker', action: 'Execute trades to distort price feed', target: 'DEX liquidity pool / oracle feed', expectedOutcome: 'Price feed deviates from true market value' },
+      { phase: 'manipulation', actor: 'oracle', action: 'Protocol reads manipulated price', target: 'Price-dependent function', expectedOutcome: 'Contract operates on false price data' },
+      { phase: 'exploitation', actor: 'attacker', action: v.attackVector || 'Exploit price discrepancy for profit', target: 'Vulnerable contract', expectedOutcome: 'Favorable trade / mint / borrow at manipulated price' },
       { phase: 'profit', actor: 'attacker', action: 'Convert exploited tokens to profit asset', target: 'DEX', expectedOutcome: 'Realize financial gain' },
-      { phase: 'cleanup', actor: 'attacker', action: 'Repay flash loan', target: 'Flash loan provider', expectedOutcome: 'Net profit after loan repayment' },
+      { phase: 'cleanup', actor: 'attacker', action: 'Repay flash loan / unwind positions', target: 'Flash loan provider', expectedOutcome: 'Net profit secured' },
     ],
     fundFlow: () => [
-      { from: { entity: 'Flash Loan', role: 'source' }, to: { entity: 'Attacker', role: 'intermediate' }, asset: 'USDC', amount: '~millions', step: 1 },
-      { from: { entity: 'Attacker', role: 'intermediate' }, to: { entity: 'DEX Pool', role: 'intermediate' }, asset: 'Token A', amount: 'large', step: 2 },
-      { from: { entity: 'Vulnerable Contract', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Token B', amount: 'excess', step: 3 },
-      { from: { entity: 'Attacker', role: 'intermediate' }, to: { entity: 'Flash Loan', role: 'destination' }, asset: 'USDC', amount: 'principal + fee', step: 4 },
+      { from: { entity: 'Flash Loan', role: 'source' }, to: { entity: 'Attacker', role: 'intermediate' }, asset: 'Capital', amount: 'flash loan amount', step: 1 },
+      { from: { entity: 'Attacker', role: 'intermediate' }, to: { entity: 'DEX Pool', role: 'intermediate' }, asset: 'Tokens', amount: 'large volume', step: 2 },
+      { from: { entity: 'Vulnerable Contract', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Profit', amount: 'price delta', step: 3 },
     ],
     defenses: () => ({
-      immediate: ['Use TWAP instead of spot price', 'Add price deviation threshold checks'],
-      shortTerm: ['Integrate multiple oracle sources', 'Implement price volatility limits'],
+      immediate: ['Use TWAP instead of spot price', 'Add price deviation threshold checks', 'Verify oracle freshness (updatedAt, roundId)'],
+      shortTerm: ['Integrate multiple oracle sources', 'Implement aggregator with outlier rejection'],
       longTerm: ['Adopt Chainlink decentralized oracles', 'Deploy oracle guardian monitoring'],
     }),
     difficulty: 'medium',
   },
-  VP002: {
-    name: 'Flash Loan Attack',
+  LR: {
+    name: 'Liquidity / Reserve Exploit',
     steps: (v) => [
-      { phase: 'preparation', actor: 'attacker', action: 'Initiate flash loan for massive capital', target: 'Flash loan provider (Aave/dYdX)', expectedOutcome: 'Borrowed funds available within same tx' },
-      { phase: 'execution', actor: 'attacker', action: v.attackVector || 'Use borrowed funds to manipulate protocol state', target: 'Target protocol', expectedOutcome: 'Protocol state altered within single transaction' },
-      { phase: 'manipulation', actor: 'protocol', action: 'Protocol processes transaction with no cross-block validation', target: 'Vulnerable contract', expectedOutcome: 'State change accepted without delay' },
-      { phase: 'exploitation', actor: 'attacker', action: 'Extract value from manipulated state', target: 'Protocol treasury/users', expectedOutcome: 'Unauthorized gain' },
-      { phase: 'profit', actor: 'attacker', action: 'Convert extracted value to stablecoin', target: 'DEX', expectedOutcome: 'Profit realized' },
-      { phase: 'cleanup', actor: 'attacker', action: 'Repay flash loan in same transaction', target: 'Flash loan provider', expectedOutcome: 'Attack completed, net profit extracted' },
-    ],
-    fundFlow: () => [
-      { from: { entity: 'Flash Loan', role: 'source' }, to: { entity: 'Attacker', role: 'intermediate' }, asset: 'ETH/USDC', amount: 'flash loan amount', step: 1 },
-      { from: { entity: 'Attacker', role: 'intermediate' }, to: { entity: 'Protocol', role: 'intermediate' }, asset: 'manipulated', amount: 'large', step: 2 },
-      { from: { entity: 'Protocol', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'profit token', amount: 'excess', step: 3 },
-      { from: { entity: 'Attacker', role: 'intermediate' }, to: { entity: 'Flash Loan', role: 'destination' }, asset: 'ETH/USDC', amount: 'repayment', step: 4 },
-    ],
-    defenses: () => ({
-      immediate: ['Add time locks on critical operations', 'Limit cumulative effect within single transaction'],
-      shortTerm: ['Use on-chain historical price averages', 'Implement transaction volume limits'],
-      longTerm: ['Deploy MEV protection mechanisms', 'Use Commit-Reveal schemes'],
-    }),
-    difficulty: 'low',
-  },
-  VP003: {
-    name: 'Reserve Manipulation',
-    steps: (v) => [
-      { phase: 'preparation', actor: 'attacker', action: 'Identify reserve-dependent calculation', target: 'Pool contract', expectedOutcome: 'Reserve ratio used for pricing/rewards' },
-      { phase: 'execution', actor: 'attacker', action: v.attackVector || 'Transfer tokens directly to pool to inflate reserves', target: 'Liquidity pool', expectedOutcome: 'Reserve balance artificially inflated' },
-      { phase: 'manipulation', actor: 'protocol', action: 'Contract reads inflated reserve for calculation', target: 'Reserve-dependent function', expectedOutcome: 'Skewed calculation output' },
-      { phase: 'exploitation', actor: 'attacker', action: 'Call skim() or exploit calculation error', target: 'Vulnerable contract', expectedOutcome: 'Extract excess tokens' },
-      { phase: 'profit', actor: 'attacker', action: 'Swap extracted tokens for profit', target: 'DEX', expectedOutcome: 'Financial gain realized' },
-      { phase: 'cleanup', actor: 'attacker', action: 'Remove direct transfers if any remaining', target: 'Pool', expectedOutcome: 'Traces minimized' },
-    ],
-    fundFlow: () => [
-      { from: { entity: 'Attacker', role: 'source' }, to: { entity: 'Pool', role: 'intermediate' }, asset: 'Token', amount: 'direct transfer', step: 1 },
-      { from: { entity: 'Pool', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Excess Token', amount: 'skim/exploit', step: 2 },
-    ],
-    defenses: () => ({
-      immediate: ['Remove direct reserve modification functions', 'Add reserve validation checks'],
-      shortTerm: ['Use oracle for reserve data', 'Implement multi-sig control'],
-      longTerm: ['Completely restructure reserve management logic'],
-    }),
-    difficulty: 'medium',
-  },
-  VP004: {
-    name: 'Price Calculation Flaw',
-    steps: (v) => [
-      { phase: 'preparation', actor: 'attacker', action: 'Analyze price calculation for precision/boundary issues', target: 'Calculation function', expectedOutcome: 'Identify exploitable math flaw' },
-      { phase: 'execution', actor: 'attacker', action: v.attackVector || 'Craft input parameters to trigger calculation error', target: 'Price calculation function', expectedOutcome: 'Incorrect price output' },
-      { phase: 'manipulation', actor: 'protocol', action: 'Contract uses flawed calculation result', target: 'Downstream logic', expectedOutcome: 'State updated with wrong values' },
-      { phase: 'exploitation', actor: 'attacker', action: 'Repeat exploit to compound gains', target: 'Vulnerable contract', expectedOutcome: 'Accumulated profit from repeated exploitation' },
-      { phase: 'profit', actor: 'attacker', action: 'Convert gained tokens', target: 'DEX', expectedOutcome: 'Profit extraction' },
-      { phase: 'cleanup', actor: 'attacker', action: 'No cleanup needed - pure math exploit', target: 'N/A', expectedOutcome: 'Attack complete' },
-    ],
-    fundFlow: () => [
-      { from: { entity: 'Attacker', role: 'source' }, to: { entity: 'Contract', role: 'intermediate' }, asset: 'Input tokens', amount: 'crafted amount', step: 1 },
-      { from: { entity: 'Contract', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Excess tokens', amount: 'calculation delta', step: 2 },
-    ],
-    defenses: () => ({
-      immediate: ['Use safe math libraries', 'Add precision checks'],
-      shortTerm: ['Implement price deviation limits', 'Increase test coverage'],
-      longTerm: ['Formally verify critical calculation logic'],
-    }),
-    difficulty: 'high',
-  },
-  VP005: {
-    name: 'Liquidity Pool Manipulation',
-    steps: (v) => [
-      { phase: 'preparation', actor: 'attacker', action: 'Obtain flash loan or large capital', target: 'Flash loan/own funds', expectedOutcome: 'Capital ready for manipulation' },
-      { phase: 'execution', actor: 'attacker', action: v.attackVector || 'Add/remove liquidity with skewed ratios', target: 'Liquidity pool', expectedOutcome: 'LP token minting logic exploited' },
-      { phase: 'manipulation', actor: 'protocol', action: 'Pool state distorted, LP calculations affected', target: 'AMM contract', expectedOutcome: 'Abnormal LP values or rewards' },
-      { phase: 'exploitation', actor: 'attacker', action: 'Remove liquidity or claim rewards at favorable terms', target: 'Pool/Reward contract', expectedOutcome: 'Disproportionate gain' },
-      { phase: 'profit', actor: 'attacker', action: 'Convert to stablecoin', target: 'DEX', expectedOutcome: 'Profit realized' },
+      { phase: 'preparation', actor: 'attacker', action: 'Obtain large capital via flash loan', target: 'Flash loan provider', expectedOutcome: 'Capital ready for manipulation' },
+      { phase: 'execution', actor: 'attacker', action: v.attackVector || 'Manipulate pool reserves or liquidity state', target: 'Liquidity pool / protocol', expectedOutcome: 'Reserve ratio / state distorted' },
+      { phase: 'manipulation', actor: 'protocol', action: 'Contract reads manipulated reserves for calculation', target: 'Reserve-dependent function', expectedOutcome: 'Calculation based on false data' },
+      { phase: 'exploitation', actor: 'attacker', action: 'Execute mint/burn/liquidate at favorable terms', target: 'Vulnerable contract', expectedOutcome: 'Disproportionate gain' },
+      { phase: 'profit', actor: 'attacker', action: 'Convert exploited tokens to stablecoin', target: 'DEX', expectedOutcome: 'Financial gain realized' },
       { phase: 'cleanup', actor: 'attacker', action: 'Repay flash loan', target: 'Flash loan provider', expectedOutcome: 'Net profit secured' },
     ],
     fundFlow: () => [
       { from: { entity: 'Flash Loan', role: 'source' }, to: { entity: 'Attacker', role: 'intermediate' }, asset: 'Capital', amount: 'large', step: 1 },
-      { from: { entity: 'Attacker', role: 'intermediate' }, to: { entity: 'LP Pool', role: 'intermediate' }, asset: 'Tokens', amount: 'skewed', step: 2 },
-      { from: { entity: 'LP Pool', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'LP/Excess tokens', amount: 'disproportionate', step: 3 },
+      { from: { entity: 'Attacker', role: 'intermediate' }, to: { entity: 'Pool / Protocol', role: 'intermediate' }, asset: 'Tokens', amount: 'skewed ratio', step: 2 },
+      { from: { entity: 'Protocol', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Profit', amount: 'extracted', step: 3 },
     ],
     defenses: () => ({
-      immediate: ['Set minimum liquidity requirements', 'Add price impact warnings'],
-      shortTerm: ['Implement dynamic slippage protection', 'Limit large liquidity removals'],
-      longTerm: ['Use tiered liquidity mechanisms'],
+      immediate: ['Add reserve validation checks', 'Implement mint/burn slippage protection', 'Add time delay on reserve-dependent operations'],
+      shortTerm: ['Use oracle for reserve data verification', 'Implement multi-sig control'],
+      longTerm: ['Restructure reserve-independent logic', 'Time-weighted reserve averaging'],
     }),
     difficulty: 'medium',
   },
-  VP006: {
-    name: 'Slippage Control Bypass',
+  TO: {
+    name: 'Transaction Ordering / Timing Exploit',
     steps: (v) => [
-      { phase: 'preparation', actor: 'mev_bot', action: 'Detect pending user transaction in mempool', target: 'Mempool', expectedOutcome: 'Target transaction identified' },
-      { phase: 'execution', actor: 'mev_bot', action: 'Front-run: buy before victim', target: 'DEX pool', expectedOutcome: 'Price moved against victim' },
-      { phase: 'manipulation', actor: 'victim', action: 'User transaction executes at worse price than expected', target: 'DEX', expectedOutcome: 'Slippage tolerance consumed' },
-      { phase: 'exploitation', actor: 'mev_bot', action: 'Back-run: sell after victim', target: 'DEX pool', expectedOutcome: 'Price restored, MEV profit captured' },
-      { phase: 'profit', actor: 'mev_bot', action: 'Net profit from front-run + back-run spread', target: 'DEX', expectedOutcome: 'MEV extracted' },
-      { phase: 'cleanup', actor: 'mev_bot', action: 'No cleanup needed', target: 'N/A', expectedOutcome: 'Attack complete' },
+      { phase: 'preparation', actor: 'mev_bot', action: 'Monitor mempool for target transaction', target: 'Mempool', expectedOutcome: 'Victim transaction identified' },
+      { phase: 'execution', actor: 'mev_bot', action: v.attackVector || 'Insert transactions before and after victim', target: 'DEX pool', expectedOutcome: 'Price manipulated around victim trade' },
+      { phase: 'manipulation', actor: 'victim', action: 'Victim transaction executes at manipulated price', target: 'DEX', expectedOutcome: 'Victim receives worse price than expected' },
+      { phase: 'exploitation', actor: 'mev_bot', action: 'Back-run trade to restore price and extract profit', target: 'DEX pool', expectedOutcome: 'MEV profit captured' },
+      { phase: 'profit', actor: 'mev_bot', action: 'Net profit from sandwich spread', target: 'DEX', expectedOutcome: 'MEV extracted' },
+      { phase: 'cleanup', actor: 'mev_bot', action: 'No cleanup needed', target: 'N/A', expectedOutcome: 'Attack complete within block' },
     ],
     fundFlow: () => [
       { from: { entity: 'MEV Bot', role: 'source' }, to: { entity: 'DEX Pool', role: 'intermediate' }, asset: 'Token A', amount: 'front-run buy', step: 1 },
@@ -145,62 +82,83 @@ const ATTACK_TEMPLATES: Record<string, {
       { from: { entity: 'DEX Pool', role: 'intermediate' }, to: { entity: 'MEV Bot', role: 'destination' }, asset: 'Token B', amount: 'back-run sell', step: 3 },
     ],
     defenses: () => ({
-      immediate: ['Add minimum slippage limits', 'Implement TWAP execution'],
-      shortTerm: ['Integrate MEV protection', 'Use private transaction pools'],
-      longTerm: ['Deploy fair ordering mechanisms'],
+      immediate: ['Add deadline parameter to all swap/deposit/withdraw', 'Enforce minimum slippage limits'],
+      shortTerm: ['Integrate MEV protection (Flashbots)', 'Use private transaction pools'],
+      longTerm: ['Deploy fair ordering mechanisms', 'Implement commit-reveal schemes'],
     }),
     difficulty: 'low',
   },
-  VP007: {
-    name: 'TWAP Manipulation',
+  AC: {
+    name: 'Access Control / Privilege Exploit',
     steps: (v) => [
-      { phase: 'preparation', actor: 'attacker', action: 'Obtain flash loan across multiple blocks', target: 'Flash loan provider', expectedOutcome: 'Capital available for multi-block manipulation' },
-      { phase: 'execution', actor: 'attacker', action: v.attackVector || 'Execute trades across multiple blocks to skew TWAP', target: 'DEX pool', expectedOutcome: 'TWAP accumulator manipulated' },
-      { phase: 'manipulation', actor: 'oracle', action: 'Protocol reads manipulated TWAP value', target: 'TWAP oracle', expectedOutcome: 'Time-averaged price still deviates' },
-      { phase: 'exploitation', actor: 'attacker', action: 'Use distorted TWAP for favorable protocol interaction', target: 'Vulnerable contract', expectedOutcome: 'Profit from TWAP deviation' },
-      { phase: 'profit', actor: 'attacker', action: 'Extract profit and unwind positions', target: 'DEX', expectedOutcome: 'Gain realized' },
-      { phase: 'cleanup', actor: 'attacker', action: 'Repay flash loan', target: 'Flash loan provider', expectedOutcome: 'Net profit secured' },
+      { phase: 'preparation', actor: 'insider', action: 'Identify privileged function without timelock', target: 'Protocol admin functions', expectedOutcome: 'Attack vector identified' },
+      { phase: 'execution', actor: 'insider', action: v.attackVector || 'Execute privileged function to alter critical parameters', target: 'Protocol state', expectedOutcome: 'Parameters / oracle address changed' },
+      { phase: 'manipulation', actor: 'protocol', action: 'Protocol operates with altered parameters', target: 'Protocol logic', expectedOutcome: 'Economic model broken' },
+      { phase: 'exploitation', actor: 'insider', action: 'Extract value through manipulated state', target: 'Protocol users', expectedOutcome: 'Funds extracted' },
+      { phase: 'profit', actor: 'insider', action: 'Convert to stablecoin and exit', target: 'DEX / CEX', expectedOutcome: 'Financial gain' },
+      { phase: 'cleanup', actor: 'insider', action: 'Cover tracks', target: 'N/A', expectedOutcome: 'Exit completed' },
     ],
     fundFlow: () => [
-      { from: { entity: 'Flash Loan', role: 'source' }, to: { entity: 'Attacker', role: 'intermediate' }, asset: 'Capital', amount: 'large', step: 1 },
-      { from: { entity: 'Attacker', role: 'intermediate' }, to: { entity: 'DEX Pool', role: 'intermediate' }, asset: 'Tokens', amount: 'multi-block', step: 2 },
-      { from: { entity: 'Vulnerable Contract', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Profit', amount: 'TWAP delta', step: 3 },
+      { from: { entity: 'Privileged Account', role: 'source' }, to: { entity: 'Protocol', role: 'intermediate' }, asset: 'Privilege', amount: 'admin access', step: 1 },
+      { from: { entity: 'Protocol', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Tokens', amount: 'extracted', step: 2 },
     ],
     defenses: () => ({
-      immediate: ['Increase TWAP window length', 'Implement price deviation limits'],
-      shortTerm: ['Integrate external price source verification', 'Monitor abnormal TWAP movements'],
-      longTerm: ['Use Chainlink price aggregators'],
+      immediate: ['Add timelock to all admin functions', 'Require multi-signature for critical changes'],
+      shortTerm: ['Implement governance voting for parameter changes', 'Add parameter change events with monitoring'],
+      longTerm: ['Full DAO governance migration', 'Deploy timelock with 48h+ delay'],
+    }),
+    difficulty: 'low',
+  },
+  CL: {
+    name: 'Calculation Logic Exploit',
+    steps: (v) => [
+      { phase: 'preparation', actor: 'attacker', action: 'Analyze calculation logic for rounding/division flaws', target: 'Math-dependent functions', expectedOutcome: 'Exploitable calculation error identified' },
+      { phase: 'execution', actor: 'attacker', action: v.attackVector || 'Craft input to trigger rounding or decimal error', target: 'Calculation function', expectedOutcome: 'Incorrect output from math flaw' },
+      { phase: 'manipulation', actor: 'protocol', action: 'Protocol uses flawed calculation result', target: 'Downstream logic', expectedOutcome: 'State updated with incorrect values' },
+      { phase: 'exploitation', actor: 'attacker', action: 'Repeat exploit to compound gains', target: 'Vulnerable contract', expectedOutcome: 'Accumulated profit from repeated exploitation' },
+      { phase: 'profit', actor: 'attacker', action: 'Convert gained tokens', target: 'DEX', expectedOutcome: 'Profit extraction' },
+      { phase: 'cleanup', actor: 'attacker', action: 'No cleanup needed', target: 'N/A', expectedOutcome: 'Attack complete' },
+    ],
+    fundFlow: () => [
+      { from: { entity: 'Attacker', role: 'source' }, to: { entity: 'Contract', role: 'intermediate' }, asset: 'Input tokens', amount: 'crafted amount', step: 1 },
+      { from: { entity: 'Contract', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Excess tokens', amount: 'calculation delta', step: 2 },
+    ],
+    defenses: () => ({
+      immediate: ['Use SafeMath / PRBMath libraries', 'Multiply before dividing', 'Add precision checks'],
+      shortTerm: ['Implement price deviation limits', 'Add fuzz testing for extreme values'],
+      longTerm: ['Formally verify critical calculation logic'],
     }),
     difficulty: 'high',
   },
-  VP008: {
-    name: 'AMM Exploitation',
+  CR: {
+    name: 'Composability Exploit',
     steps: (v) => [
-      { phase: 'preparation', actor: 'attacker', action: 'Identify AMM invariant vulnerability or reentrancy', target: 'AMM contract', expectedOutcome: 'Attack vector identified' },
-      { phase: 'execution', actor: 'attacker', action: v.attackVector || 'Execute reentrancy or batch swap to exploit AMM logic', target: 'AMM contract', expectedOutcome: 'AMM state corrupted' },
-      { phase: 'manipulation', actor: 'protocol', action: 'AMM invariant broken or global average price manipulated', target: 'AMM internal state', expectedOutcome: 'Incorrect state persisted' },
-      { phase: 'exploitation', actor: 'attacker', action: 'Extract value from corrupted AMM state', target: 'AMM pool', expectedOutcome: 'Tokens drained' },
-      { phase: 'profit', actor: 'attacker', action: 'Convert drained tokens to stablecoin', target: 'DEX', expectedOutcome: 'Profit realized' },
-      { phase: 'cleanup', actor: 'attacker', action: 'Cover tracks if reentrancy used', target: 'N/A', expectedOutcome: 'Attack complete' },
+      { phase: 'preparation', actor: 'attacker', action: 'Identify external protocol dependency', target: 'External protocol / bridge', expectedOutcome: 'Single point of failure found' },
+      { phase: 'execution', actor: 'attacker', action: v.attackVector || 'Manipulate external protocol state', target: 'External DEX / bridge', expectedOutcome: 'External price / state distorted' },
+      { phase: 'manipulation', actor: 'protocol', action: 'Protocol reads manipulated external data', target: 'Dependent function', expectedOutcome: 'Cross-protocol influence accepted' },
+      { phase: 'exploitation', actor: 'attacker', action: 'Trigger liquidation / mint at favorable terms', target: 'Vulnerable contract', expectedOutcome: 'Value extracted across protocols' },
+      { phase: 'profit', actor: 'attacker', action: 'Convert extracted value to stablecoin', target: 'DEX', expectedOutcome: 'Profit realized' },
+      { phase: 'cleanup', actor: 'attacker', action: 'Repay flash loan if used', target: 'Flash loan provider', expectedOutcome: 'Net profit secured' },
     ],
     fundFlow: () => [
-      { from: { entity: 'Attacker', role: 'source' }, to: { entity: 'AMM Pool', role: 'intermediate' }, asset: 'Tokens', amount: 'exploit input', step: 1 },
-      { from: { entity: 'AMM Pool', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Drained tokens', amount: 'excess', step: 2 },
+      { from: { entity: 'Attacker', role: 'source' }, to: { entity: 'External Protocol', role: 'intermediate' }, asset: 'Tokens', amount: 'manipulation input', step: 1 },
+      { from: { entity: 'Vulnerable Protocol', role: 'intermediate' }, to: { entity: 'Attacker', role: 'destination' }, asset: 'Profit', amount: 'cross-protocol', step: 2 },
     ],
     defenses: () => ({
-      immediate: ['Formally verify AMM contract', 'Add boundary checks'],
-      shortTerm: ['Limit extreme parameter values', 'Implement pause mechanisms'],
-      longTerm: ['Use audited AMM templates'],
+      immediate: ['Add circuit breaker for external dependency', 'Implement fallback price source'],
+      shortTerm: ['Multi-source external price verification', 'Add consistency checks on external returns'],
+      longTerm: ['Reduce external protocol dependency', 'Adopt internal oracle aggregation'],
     }),
-    difficulty: 'high',
+    difficulty: 'medium',
   },
 };
 
 const COMBINED_CHAINS: Array<{ name: string; pattern: string[] }> = [
-  { name: 'Classic Flash Loan Chain', pattern: ['VP002', 'VP001', 'VP005'] },
-  { name: 'TWAP Attack Chain', pattern: ['VP002', 'VP007', 'VP001'] },
-  { name: 'Slippage Attack Chain', pattern: ['VP006', 'VP008', 'VP005'] },
-  { name: 'Reserve Attack Chain', pattern: ['VP003', 'VP004', 'VP001'] },
+  { name: 'Classic Flash Loan to Oracle Chain', pattern: ['LR-01', 'OD-01', 'LR-03'] },
+  { name: 'Oracle Feed to Liquidation Chain', pattern: ['OD-03', 'LR-02'] },
+  { name: 'MEV Sandwich Chain', pattern: ['TO-01', 'TO-02'] },
+  { name: 'Privilege Abuse Cascade', pattern: ['AC-01', 'AC-02', 'OD-03'] },
+  { name: 'Cross-Protocol Cascading Chain', pattern: ['CR-01', 'CR-03'] },
 ];
 
 import type { Vulnerability } from '../../vulnerability-agent';
@@ -215,7 +173,8 @@ export class PriceManipulationReconstructor {
     const attacks: PriceManipulationAttack[] = [];
 
     for (const vuln of vulnerabilities) {
-      const template = ATTACK_TEMPLATES[vuln.patternId];
+      const prefix = getCategoryPrefix(vuln.patternId);
+      const template = CATEGORY_TEMPLATES[prefix];
       if (!template) continue;
 
       const feasibility = this.assessFeasibility(vuln, template.difficulty);
@@ -223,8 +182,8 @@ export class PriceManipulationReconstructor {
 
       attacks.push({
         attackType: vuln.patternId,
-        attackName: template.name,
-        description: `${template.name} attack reconstructed from: ${vuln.title}. ${vuln.description}`,
+        attackName: `${template.name}: ${vuln.patternName}`,
+        description: `${vuln.patternId} reconstructed from: ${vuln.title}. ${vuln.description}`,
         steps: template.steps(vuln),
         fundFlow: template.fundFlow(),
         feasibility,
@@ -299,7 +258,7 @@ export class PriceManipulationReconstructor {
             caseId: c.id,
             caseName: `${c.id} - ${c.blockchain_platform} (${c.time})`,
             similarity: Math.round(similarity * 100) / 100,
-            matchReason: `Both involve ${vuln.patternName} pattern. Case occurred on ${c.blockchain_platform}.`,
+            matchReason: `Both involve ${vuln.patternName} pattern on ${c.blockchain_platform}.`,
           };
         }
       }
@@ -330,7 +289,7 @@ export class PriceManipulationReconstructor {
     return Math.min(score, 1.0);
   }
 
-  private buildCombinedChains(attacks: PriceManipulationAttack[], classification: ProtocolClassification): AttackChain[] {
+  private buildCombinedChains(attacks: PriceManipulationAttack[], _classification: ProtocolClassification): AttackChain[] {
     const foundTypes = new Set(attacks.map((a) => a.attackType));
     const chains: AttackChain[] = [];
 

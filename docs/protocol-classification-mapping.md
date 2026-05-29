@@ -129,14 +129,21 @@
 
 | 协议类型 | 优先检测漏洞（按优先级排序） |
 |----------|---------------------------|
-| **dex** | VP001, VP005, VP006, VP007, VP008 |
-| **amm** | VP001, VP007, VP008, VP005, VP006 |
-| **lending** | VP001, VP002, VP003, VP004 |
-| **perp** | VP001, VP002, VP004, VP006 |
-| **yield_aggregator** | VP002, VP003, VP006 |
-| **bridge** | VP003, VP004, VP008 |
-| **stablecoin** | VP001, VP002, VP003 |
-| **unknown** | VP001, VP002 |
+| **dex** | OD-01, OD-02, OD-03, TO-01, TO-02, LR-01, LR-03, CL-01, CL-03, CR-03 |
+
+| **amm** | OD-01, OD-02, OD-03, LR-01, LR-03, TO-01, TO-02, TO-03, CL-01, CL-03, CR-03 |
+
+| **lending** | OD-01, OD-02, OD-03, LR-01, LR-02, TO-01, TO-03, CL-02, CR-01 |
+
+| **perp** | OD-01, OD-02, OD-03, LR-01, LR-02, TO-01, TO-02, CL-02, CR-01, CR-03 |
+
+| **yield_aggregator** | LR-01, LR-03, TO-01, CR-01, CR-02, CR-03 |
+
+| **bridge** | LR-03, CL-02, CR-01, CR-02, CR-03, AC-02 |
+
+| **stablecoin** | OD-01, OD-02, OD-03, LR-03, TO-01, AC-02, AC-03, CR-01 |
+
+| **unknown** | OD-01, OD-02, LR-01, TO-01, TO-02 |
 
 ---
 
@@ -173,14 +180,25 @@
 
 | 漏洞模式 | 适用协议类型 |
 |----------|------------|
-| VP001 (Oracle Manipulation) | dex, amm, perp, lending |
-| VP002 (Flash Loan Attack) | dex, amm, perp, lending, yield_aggregator |
-| VP003 (Reserve Manipulation) | lending, bridge |
-| VP004 (Price Calculation Flaw) | perp, lending |
-| VP005 (Liquidity Pool Manipulation) | amm, dex |
-| VP006 (Slippage Bypass) | amm, dex, perp |
-| VP007 (TWAP Manipulation) | amm, dex |
-| VP008 (AMM Exploitation) | amm, dex |
+| OD-01 (Oracle Spot Price) | dex, amm, perp, lending |
+| OD-02 (Short TWAP) | amm, dex |
+| OD-03 (Centralized Feed) | dex, amm, perp, lending, stablecoin |
+| OD-04 (Stale Oracle) | dex, amm, perp, lending |
+| LR-01 (Instant Reserve) | amm, dex, perp, lending |
+| LR-02 (Collateral Ratio) | lending, perp |
+| LR-03 (TVL-Driven) | amm, dex, bridge, stablecoin, yield_aggregator |
+| TO-01 (Missing Deadline) | amm, dex, perp, stablecoin, yield_aggregator |
+| TO-02 (No Slippage) | amm, dex, perp |
+| TO-03 (Reentrancy Price) | amm, lending |
+| AC-01 (Oracle Update) | all |
+| AC-02 (Parameter Adjust) | bridge, stablecoin, all |
+| AC-03 (Mint/Burn Privilege) | stablecoin |
+| CL-01 (Rounding) | amm, dex |
+| CL-02 (Decimal Mismatch) | perp, lending, bridge |
+| CL-03 (AMM Misconfig) | amm, dex |
+| CR-01 (Sole External Source) | lending, perp, yield_aggregator, bridge, stablecoin |
+| CR-02 (LP Token Value) | yield_aggregator, bridge |
+| CR-03 (Cross-Protocol Call) | amm, dex, perp, yield_aggregator, bridge |
 
 ---
 

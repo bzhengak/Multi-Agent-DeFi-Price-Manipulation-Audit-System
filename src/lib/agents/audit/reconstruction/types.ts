@@ -4,7 +4,7 @@ export type DifficultyLevel = 'low' | 'medium' | 'high';
 
 export interface AttackStep {
   phase: AttackPhase;
-  actor: 'attacker' | 'victim' | 'protocol' | 'oracle' | 'mev_bot';
+  actor: 'attacker' | 'victim' | 'protocol' | 'oracle' | 'mev_bot' | 'insider';
   action: string;
   target: string;
   expectedOutcome: string;

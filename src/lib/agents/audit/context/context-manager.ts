@@ -15,11 +15,13 @@ export interface AnalysisContext {
 
 export interface RelevantPattern {
   id: string;
+  category: string;
   name: string;
-  description: string;
-  indicators: string[];
+  code_features: string[];
+  related_attacks: string[];
   severity: string;
   priority: number;
+  references?: { swc: string; owasp: string };
 }
 
 export interface RelevantCase {
@@ -65,10 +67,12 @@ export class ContextManager {
   private filterRelevantPatterns(
     patterns: Array<{
       id: string;
+      category: string;
       name: string;
-      description: string;
-      indicators: string[];
+      code_features: string[];
+      related_attacks: string[];
       severity: string;
+      references?: { swc: string; owasp: string };
     }>,
     classification: ProtocolClassification,
   ): RelevantPattern[] {
@@ -78,11 +82,13 @@ export class ContextManager {
       .filter((p) => prioritySet.has(p.id))
       .map((p, idx) => ({
         id: p.id,
+        category: p.category,
         name: p.name,
-        description: p.description,
-        indicators: p.indicators,
+        code_features: p.code_features,
+        related_attacks: p.related_attacks,
         severity: p.severity,
         priority: idx,
+        references: p.references,
       }));
   }
 
@@ -98,26 +104,26 @@ export class ContextManager {
     depth: 'standard' | 'deep',
   ): RelevantCase[] {
     const maxCases = depth === 'deep' ? 20 : 10;
-    const vulnNames = new Map<string, string>([
-      ['VP001', 'Oracle Manipulation'],
-      ['VP002', 'Flash Loan Attack'],
-      ['VP003', 'Reserve Manipulation'],
-      ['VP004', 'Price Calculation Flaw'],
-      ['VP005', 'Liquidity Pool Manipulation'],
-      ['VP006', 'Slippage Control Bypass'],
-      ['VP007', 'TWAP Manipulation'],
-      ['VP008', 'AMM Exploitation'],
-    ]);
+
+    const categoryKeywords: Record<string, string> = {
+      'OD': 'oracle',
+      'LR': 'liquidity reserve',
+      'TO': 'transaction order timing deadline slippage',
+      'AC': 'access control privilege admin owner mint burn',
+      'CL': 'calculation precision decimal rounding math flaw',
+      'CR': 'composability external protocol bridge cross dependency',
+    };
 
     return cases
       .map((c) => {
         let relevance = 0;
         if (c.blockchain_platform.toLowerCase() === classification.type) relevance += 0.3;
         if (c.vulnerability_pattern) {
-          const patternName = c.vulnerability_pattern.toLowerCase();
+          const patternLower = c.vulnerability_pattern.toLowerCase();
           for (const vpId of classification.priorityVulnerabilities) {
-            const name = vulnNames.get(vpId)?.toLowerCase() ?? '';
-            if (patternName.includes(name) || name.includes(patternName)) {
+            const prefix = vpId.substring(0, 2);
+            const keywords = categoryKeywords[prefix] ?? '';
+            if (keywords.split(/\s+/).some((kw) => patternLower.includes(kw))) {
               relevance += 0.7;
               break;
             }
@@ -141,24 +147,29 @@ export class ContextManager {
     const areas: string[] = [];
 
     if (classification.riskProfile.oracleDependency) {
-      areas.push('Oracle price source validation and manipulation resistance');
+      areas.push('Oracle price source validation and manipulation resistance (OD-01, OD-02, OD-03, OD-04)');
     }
     if (classification.riskProfile.flashloanExposure) {
-      areas.push('Flash loan protection and cross-block validation');
+      areas.push('Flash loan protection and cross-block validation (LR-01, LR-02, CR-01)');
     }
     if (classification.riskProfile.liquiditySensitivity !== 'low') {
-      areas.push('Liquidity pool state manipulation and reserve integrity');
+      areas.push('Liquidity pool state manipulation and reserve integrity (LR-01, LR-03)');
     }
-    if (classification.type === 'amm' || classification.type === 'dex') {
-      areas.push('AMM invariant preservation and slippage protection');
+    if (classification.type === 'dex_amm') {
+      areas.push('AMM/DEX invariant preservation and slippage protection (CL-03, TO-01, TO-02)');
+      areas.push('Reentrancy guards on price-sensitive external calls (TO-03)');
     }
     if (classification.type === 'lending' || classification.type === 'perp') {
-      areas.push('Collateral valuation and liquidation safety');
+      areas.push('Collateral/margin valuation and liquidation safety (LR-02, OD-01, OD-03)');
     }
 
     for (const fn of classification.criticalFunctions.slice(0, 5)) {
       areas.push(`Function ${fn}() input validation and state consistency`);
     }
+
+    areas.push('Access control on admin functions (AC-01, AC-02, AC-03)');
+    areas.push('Calculation precision and decimal normalization (CL-01, CL-02)');
+    areas.push('Cross-protocol composability dependencies (CR-01, CR-02, CR-03)');
 
     return areas;
   }

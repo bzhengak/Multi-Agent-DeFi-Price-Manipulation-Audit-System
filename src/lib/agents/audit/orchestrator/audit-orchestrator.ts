@@ -48,7 +48,7 @@ export class AuditOrchestrator {
   private onProgress?: ProgressCallback;
   private readonly totalTimeout: number;
 
-  constructor(onProgress?: ProgressCallback, totalTimeout: number = 600000) {
+  constructor(onProgress?: ProgressCallback, totalTimeout: number = 1000000) {
     this.detector = new ProtocolTypeDetector();
     this.contextManager = new ContextManager();
     this.reconstructor = new PriceManipulationReconstructor();

@@ -18,15 +18,12 @@ export async function POST() {
       console.log('Initialized/updated history.json');
     }
 
-    // Initialize vulnerabilities.json
+    // Initialize vulnerabilities.json - always reload from data dir to pick up updates
     const vulnPath = path.join(dataDir, 'vulnerabilities.json');
     if (fs.existsSync(vulnPath)) {
-      const existingVuln = await loadJSON('vulnerabilities.json');
-      if (!existingVuln) {
-        const vulnData = JSON.parse(fs.readFileSync(vulnPath, 'utf-8'));
-        await saveJSON('vulnerabilities.json', vulnData);
-        console.log('Initialized vulnerabilities.json');
-      }
+      const vulnData = JSON.parse(fs.readFileSync(vulnPath, 'utf-8'));
+      await saveJSON('vulnerabilities.json', vulnData);
+      console.log('Initialized/updated vulnerabilities.json');
     }
 
     // Initialize analysis_history.json

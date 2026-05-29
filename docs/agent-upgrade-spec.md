@@ -246,7 +246,7 @@ export interface ProtocolClassification {
   manipulationTarget: ManipulationTarget;
   confidence: number;
   indicators: { name: string; weight: number; source: string }[];
-  priorityVulnerabilities: string[];  // 如 ['VP001', 'VP005', 'VP006']
+  priorityVulnerabilities: string[];  // 如 ['OD-01', 'OD-02', 'LR-01', 'TO-01', 'TO-02']
   criticalFunctions: string[];
   riskProfile: {
     manipulationRisk: 'low' | 'medium' | 'high' | 'critical';
@@ -264,7 +264,7 @@ export interface ProtocolClassification {
 ### PriceManipulationAttack 结构
 
 每个重建的攻击包含：
-- **attackType**: VP001-VP008 之一
+- **attackType**: OD-01~CR-03 之一
 - **steps**: 攻击步骤序列（preparation → execution → manipulation → exploitation → profit → cleanup）
 - **fundFlow**: 资金流向图
 - **feasibility**: 可行性评估（技术难度 + 经济收益 + MEV 依赖度 → 综合评分）
