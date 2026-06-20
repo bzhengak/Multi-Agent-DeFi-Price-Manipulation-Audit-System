@@ -6,7 +6,9 @@
     "dev": "next dev -p 3000",
     "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/ && cp -r data .next/standalone/",
     "start": "NODE_ENV=production node .next/standalone/server.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "ingest:patterns": "tsx scripts/ingest-patterns.ts data/vulnerabilities.json",
+    "regenerate:patterns": "tsx scripts/regenerate-patterns-json.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",
@@ -64,21 +66,24 @@
     "react-syntax-highlighter": "^15.6.1",
     "recharts": "^2.15.4",
     "sonner": "^2.0.6",
+    "sql.js": "^1.14.1",
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7",
     "uuid": "^11.1.0",
     "vaul": "^1.1.2",
-    "z-ai-web-dev-sdk": "^0.0.17",
     "zod": "^4.0.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/sql.js": "^1.4.11",
     "bun-types": "^1.3.4",
     "eslint": "^9",
     "eslint-config-next": "^16.1.1",
     "tailwindcss": "^4",
+    "tsx": "^4.19.0",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5"
   }

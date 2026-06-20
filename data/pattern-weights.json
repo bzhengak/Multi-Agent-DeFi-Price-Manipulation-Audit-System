@@ -1,0 +1,35 @@
+{
+  "version": "1.0.0",
+  "generated": "2026-06-12",
+  "rubric": {
+    "axes": {
+      "d": "Detection difficulty (1-5): LLM + static check effort to identify the code site",
+      "r": "Reasoning depth (1-5): logic steps to confirm 'exploitable'",
+      "k": "Knowledge demand (1-5): DeFi-specific knowledge to interpret"
+    },
+    "aggregation": "weight = round((d + r + k) / 3), clamped to [1, 5]"
+  },
+  "patterns": {
+    "OD-01": { "weight": 3, "scores": {"d": 2, "r": 3, "k": 3}, "rationale": "Single getReserves() call site; must trace return value into arithmetic; AMM x*y=k knowledge." },
+    "OD-02": { "weight": 3, "scores": {"d": 3, "r": 3, "k": 3}, "rationale": "Detect consult()/observe() + window parameter; reasoning needs 'short window = manipulable'; TWAP concept." },
+    "OD-03": { "weight": 2, "scores": {"d": 2, "r": 2, "k": 2}, "rationale": "Find setPrice + check onlyOwner; Slither arbitrary-send covers. Low across all axes." },
+    "OD-04": { "weight": 2, "scores": {"d": 3, "r": 2, "k": 2}, "rationale": "latestRoundData() called but updatedAt not read; Slither timestamp partial. Detection harder than OD-03 but reasoning is shallow." },
+    "OD-05": { "weight": 3, "scores": {"d": 4, "r": 3, "k": 3}, "rationale": "Triple-condition: latestRoundData() + updatedAt read + missing block.timestamp - updatedAt > X check. LLM must know heartbeat concept." },
+    "LR-01": { "weight": 3, "scores": {"d": 3, "r": 3, "k": 3}, "rationale": "mint/burn uses getReserves() in share calc; LP token math; multiple exploits (Caterpillar CUT)." },
+    "LR-02": { "weight": 3, "scores": {"d": 3, "r": 4, "k": 3}, "rationale": "Liquidation uses manipulable price; reasoning depth 4 (must model 'flash loan -> price shift -> under-collateralized borrow'). The most-exploited pattern." },
+    "LR-03": { "weight": 3, "scores": {"d": 3, "r": 4, "k": 3}, "rationale": "Rewards depend on TVL/volume; reasoning needs 'if I flash X TVL, my reward is Y, cost is Z' economic game theory." },
+    "TO-01": { "weight": 2, "scores": {"d": 2, "r": 2, "k": 2}, "rationale": "Function parameter 'uint256 deadline' missing; binary check. Lower than user prior (3-4)." },
+    "TO-02": { "weight": 3, "scores": {"d": 3, "r": 3, "k": 3}, "rationale": "amountOutMin=0 or no slippage check; MEV / sandwich attack reasoning." },
+    "TO-03": { "weight": 2, "scores": {"d": 2, "r": 3, "k": 2}, "rationale": "Slither reentrancy-* family detects; reasoning is generic reentrancy. Lower than user prior (4-5)." },
+    "AC-01": { "weight": 2, "scores": {"d": 2, "r": 2, "k": 2}, "rationale": "setOracle without onlyOwner; Slither arbitrary-send covers. Trivial across all axes." },
+    "AC-02": { "weight": 2, "scores": {"d": 3, "r": 2, "k": 2}, "rationale": "Multiple setters (fees/LTV); admin compromise is the threat; reasoning shallow." },
+    "AC-03": { "weight": 2, "scores": {"d": 2, "r": 2, "k": 2}, "rationale": "Unlimited mint/burn to a role; Slither covers. Trivial." },
+    "CL-01": { "weight": 3, "scores": {"d": 3, "r": 4, "k": 3}, "rationale": "Rounding direction; arithmetic edge case. Balancer V2 ($116M) shows it's exploitable in practice. Higher than user prior (2-3)." },
+    "CL-02": { "weight": 3, "scores": {"d": 3, "r": 2, "k": 3}, "rationale": "Token decimals not normalized; off-by-10^X bug obvious once found. Detection multi-step." },
+    "CL-03": { "weight": 4, "scores": {"d": 3, "r": 5, "k": 5}, "rationale": "Custom AMM curve (Solidly, Curve amplification, etc.); reasoning needs curve math; knowledge demand is highest in the library. Higher than user prior (2-3)." },
+    "CR-01": { "weight": 3, "scores": {"d": 3, "r": 4, "k": 3}, "rationale": "Single external price source; cross-protocol reasoning. Lower than user prior (4-5) because detectability is moderate." },
+    "CR-02": { "weight": 3, "scores": {"d": 3, "r": 3, "k": 4}, "rationale": "LP token price formula: 2*sqrt(r0*r1); Uniswap V2 math knowledge required." },
+    "CR-03": { "weight": 2, "scores": {"d": 2, "r": 2, "k": 2}, "rationale": "Return value not checked; Slither unchecked-lowlevel covers. Trivial." },
+    "CR-04": { "weight": 5, "scores": {"d": 5, "r": 5, "k": 4}, "rationale": "Cross-contract call graph traversal; multi-hop economic reasoning. The hardest pattern in the library; the only one that strictly requires T8 cross-contract tracing as a prerequisite." }
+  }
+}

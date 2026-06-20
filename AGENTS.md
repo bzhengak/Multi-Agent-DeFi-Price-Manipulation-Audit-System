@@ -1,12 +1,13 @@
 # DeFi Price Manipulation Analyzer — Agent 系统升级指南
 
-> 本文件是 opencode 中 GLM-5.1 模型的项目级指令文件，指导 AI 代理在 Workflow→Agent 架构升级开发中遵循统一的技术规范、架构约束和工作流程。
+> 版本: v3.6.0 | 最后更新: 2026-06-11
+> 本文件是 opencode 中 DeepSeek V4 Pro 模型的项目级指令文件，指导 AI 代理在 Workflow→Agent 架构升级开发中遵循统一的技术规范、架构约束和工作流程。
 
 ---
 
 ## 项目概述
 
-本项目是将 **DeFi 价格操纵分析审计系统** 从固定流水线（Workflow）升级为智能多 Agent 协作系统的工程。当前系统采用线性 3 阶段流水线（源码获取→漏洞分析→报告生成），升级后将具备动态决策、深度推理、攻击还原和风险量化能力，聚焦于 **19 种价格操纵攻击模式 (6 大类别)** 的检测与分析。
+本项目是将 **DeFi 价格操纵分析审计系统** 从固定流水线（Workflow）升级为智能多 Agent 协作系统的工程。当前系统采用线性 3 阶段流水线（源码获取→漏洞分析→报告生成），升级后将具备动态决策、深度推理、攻击还原和风险量化能力，聚焦于 **21 种价格操纵攻击模式 (6 大类别)** 的检测与分析。
 
 ### 核心架构转变
 
@@ -27,7 +28,7 @@
 - **语言**：TypeScript 5+（strict 模式，逐步启用 noImplicitAny）
 - **运行时**：Bun（开发）/ Node.js 20+（生产）
 - **样式**：Tailwind CSS 4 + shadcn/ui（new-york 风格）
-- **LLM 接入**：z-ai-web-dev-sdk（主）/ OpenAI SDK（备）
+- **LLM 接入**：OpenAI 兼容协议（默认 DeepSeek V4 Pro）
 - **认证**：jose（JWT）+ bcryptjs
 - **存储**：本地文件系统 `.storage/`（当前）→ 结构化存储（升级中）
 - **部署**：Docker 多阶段构建 + Render.com/Railway
@@ -37,7 +38,7 @@
 - **工具注册**：ToolRegistry 工具管理中心（含重试、缓存策略）
 - **记忆系统**：MemorySystem（工作记忆/情景记忆/语义记忆三层架构）
 - **协议识别**：ProtocolTypeDetector（8种DeFi协议自动识别）
-- **攻击重建**：PriceManipulationReconstructor（19种攻击模式攻击叙事生成）
+- **攻击重建**：PriceManipulationReconstructor（21种攻击模式攻击叙事生成）
 - **置信度校准**：ConfidenceCalibrator（多维置信度评估与校准）
 
 ---
@@ -45,29 +46,29 @@
 ## 升级阶段与当前状态
 
 ### 阶段一：Agent 基础设施（Phase 1 - Foundation）
-- [ ] 实现 BaseAgent 抽象类（Observe-Think-Act-Update 循环）
-- [ ] 实现 AgentConfig / AgentState 类型系统（`src/lib/agents/core/types.ts`）
-- [ ] 实现 ToolRegistry 工具注册中心（含重试策略、缓存策略）
-- [ ] 实现 MemorySystem 记忆系统（working/episodic/semantic 三层）
-- [ ] 实现 LLMClient 统一 LLM 调用封装
+- [x] 实现 BaseAgent 抽象类（Observe-Think-Act-Update 循环）
+- [x] 实现 AgentConfig / AgentState 类型系统（`src/lib/agents/core/types.ts`）
+- [x] 实现 ToolRegistry 工具注册中心（含重试策略、缓存策略）
+- [x] 实现 MemorySystem 记忆系统（working/episodic/semantic 三层）
+- [x] 实现 LLMClient 统一 LLM 调用封装
 
 ### 阶段二：核心分析引擎（Phase 2 - Analysis Engine）
-- [ ] 实现 ProtocolTypeDetector 协议类型识别引擎
-- [ ] 实现 ContextManager 针对性分析上下文构建
-- [ ] 实现 VulnerabilityAnalysisAgent 多轮迭代漏洞分析
-- [ ] 实现 PromptOptimizer 提示词优化模块
-- [ ] 集成现有漏洞模式库（OD-01~CR-04, 6大类21种模式）
+- [x] 实现 ProtocolTypeDetector 协议类型识别引擎
+- [x] 实现 ContextManager 针对性分析上下文构建
+- [x] 实现 VulnerabilityAnalysisAgent 多轮迭代漏洞分析（OTAU 已接通）
+- [x] 实现 PromptOptimizer 提示词优化模块（已集成到 act()）
+- [x] 集成现有漏洞模式库（OD-01~CR-05, 6大类21种模式）
 
-- [ ] 实现 VP001-VP008 八种攻击模式的重建逻辑
-- [ ] 实现 ConfidenceCalibrator 置信度校准机制
-- [ ] 实现攻击可行性评估（技术/经济/MEV依赖度）
-- [ ] 实现历史案例类比匹配
+- [x] 实现 VP001-VP008 八种攻击模式的重建逻辑
+- [x] 实现 ConfidenceCalibrator 置信度校准机制
+- [x] 实现攻击可行性评估（技术/经济/MEV依赖度）
+- [x] 实现历史案例类比匹配
 
 ### 阶段四：协调与集成（Phase 4 - Orchestration & Integration）
-- [ ] 实现 AuditOrchestrator 多 Agent 协调调度器
-- [ ] 实现现有 API 路由与新 Agent 系统的集成
+- [x] 实现 AuditOrchestrator 多 Agent 协调调度器
+- [x] 实现现有 API 路由与新 Agent 系统的集成
 - [ ] 实现前端 UI 适配（分析进度、中间结果展示）
-- [ ] 实现报告生成 Agent（利用攻击重建结果）
+- [x] 实现报告生成 Agent（利用攻击重建结果）
 - [ ] 端到端测试与性能基准
 
 ### 阶段五：优化与部署（Phase 5 - Optimization & Deployment）
@@ -75,6 +76,31 @@
 - [ ] 全面测试覆盖（单元/集成/E2E）
 - [ ] 安全审计（API密钥保护、输入验证、速率限制）
 - [ ] 文档与部署更新
+
+### 执行任务清单（基于 final.md + execution-plan.md v1.2）
+
+| # | 任务 | 依赖 | 人天 | 难度 | 状态 |
+|---|------|------|------|------|------|
+| **H1** | MemorySystem SQLite 后端 | — | 0.5 | S | `[x]` |
+| **T1** | OTAU 循环接通 ToolRegistry + MemorySystem | — | 2 | M | `[x]` |
+| **T2** | PromptOptimizer 实例化 + 接入 act() | T1 | 0.5 | S | `[x]` |
+| **T3** | Per-stage 超时 | — | 0.5 | S | `[x]` |
+| **T4** | 置信度差值提前停止 | — | 0.5 | S | `[x]` |
+| **T5** | LLM 结构化输出（response_format: json_schema） | T1 | 1 | M | `[x]` |
+| **T6** | 模式搬进 Prisma + CLI ingest 脚本 | — | 2 | M | `[x]` |
+| **T7** | Slither + TS AST 双层验证（16/21 pattern） | T1, T5 | 3 | M | `[ ]` |
+| **T8** | 跨合约污点子 Agent | T1, T6 | 5–8 | L | `[ ]` |
+| **T9** | 攻击重建改为 per-vulnerability 覆盖模板（Data-Driven Overlay + LLM Hybrid） | — | 1 | M | `[x]` |
+| **T10** | 确定性攻击成本估算 | — | 1–2 | S | `[ ]` |
+| **T11** | 自适应迭代预算 | T1, T7, T8 | 3–5 | M | `[ ]` |
+| **T12** | 评估 harness（v1: 1.5–2天 / v2 加分: 2–3天） | T7 | 1.5–3 | M | `[ ]` |
+| **T13** | 文档定稿（OD-05 进表、协议映射） | T6 | 1–2 | S | `[x]` |
+| **T14** | `/api/analyze` 单一状态机 | — | 1 | S | `[ ]` |
+
+> 关键路径: T1 → T2 → T7 → T12 → T13（最低毕业线）
+> 最低毕业线: T1, T2, T3, T5, T6, T7, T12-v1, T13 = ~12–15 人天（3 周）
+> 总人天: 26–36（约 5–7 周）
+> v1.2 变更: T7 改为 Slither + TS AST 双层验证（3天），Mythril 完整版移到附录 C
 
 ---
 
@@ -129,14 +155,14 @@ src/
     │   └── vulnerability-agent.ts    # 漏洞 Agent（逐步迁移）
     ├── auth/                         # 认证模块（保持不变）
     ├── blockchain/                   # 区块链数据获取（保持不变）
-    ├── llm.ts                        # 双模式 LLM（Z.ai + OpenAI）
+    ├── llm.ts                        # LLM 模块（OpenAI 兼容，DeepSeek V4 Pro）
     ├── pdf/                          # PDF 生成（保持不变）
     ├── report-templates/             # 报告模板（升级：支持攻击叙事）
     ├── storage/                      # 存储层（保持不变）
     └── utils.ts                      # 工具函数
 data/
 ├── history.json                      # 33个真实DeFi攻击案例
-└── vulnerabilities.json              # 19个漏洞模式定义（OD-01~CR-03）
+└── vulnerabilities.json              # 21个漏洞模式定义（OD-01~CR-04）
 docs/                                 # ⭐ 项目文档（新增）
 ├── agent-upgrade-spec.md             # Agent 升级详细技术规格
 ├── price-manipulation-patterns.md    # 价格操纵攻击类型体系
@@ -223,28 +249,28 @@ curl -X POST http://localhost:3000/api/init
 
 ## 价格操纵攻击类型体系
 
-系统聚焦的19种价格操纵攻击类型（6大类别），所有分析逻辑必须覆盖：
+系统聚焦的21种价格操纵攻击类型（6大类别），所有分析逻辑必须覆盖：
 
 | 类别 | 关键ID | 核心原理 | 优先检测协议 |
 |------|--------|---------|-------------|
-| Oracle Dependency | OD-01~04 | 预言机价格源可被操纵 | DEX, AMM, Perp, Lending |
+| Oracle Dependency | OD-01~05 | 预言机价格源可被操纵 | DEX, AMM, Perp, Lending, Stablecoin |
 | Liquidity & Reserve | LR-01~03 | 流动性与储备可操纵性 | AMM, DEX, Lending |
 | Transaction Ordering | TO-01~03 | 交易排序与时序依赖 | AMM, DEX, Perp |
 | Access Control | AC-01~03 | 访问控制与特权风险 | All |
 | Calculation Logic | CL-01~03 | 计算逻辑缺陷 | AMM, DEX, Perp |
-| Composability | CR-01~03 | 可组合性风险 | Lending, Perp, Yield, Bridge |
+| Composability | CR-01~05 | 可组合性风险 | Lending, Perp, Yield, Bridge |
 
 ### 协议类型映射（ProtocolTypeDetector 使用的映射）
 
 协议识别后自动关联优先检测的漏洞模式：
-- **DEX/AMM**: OD-01, OD-02, OD-03, LR-01, LR-03, TO-01, TO-02, TO-03, CL-01, CL-03, CR-03
-- **Lending**: OD-01, OD-02, OD-03, LR-01, LR-02, TO-01, TO-03, CL-02, CR-01
-- **Perp**: OD-01, OD-02, OD-03, LR-01, LR-02, TO-01, TO-02, CL-02, CR-01, CR-03
+- **DEX/AMM**: OD-01, OD-02, OD-03, OD-04, OD-05, LR-01, LR-03, TO-01, TO-02, TO-03, CL-01, CL-03, CR-03
+- **Lending**: OD-01, OD-02, OD-03, OD-04, OD-05, LR-01, LR-02, TO-01, TO-03, CL-02, CR-01
+- **Perp**: OD-01, OD-02, OD-03, OD-04, OD-05, LR-01, LR-02, TO-01, TO-02, CL-02, CR-01, CR-03
 - **Yield Aggregator**: LR-01, LR-03, TO-01, CR-01, CR-02, CR-03
 - **Bridge**: LR-03, CL-02, CR-01, CR-02, CR-03, AC-02
-- **Stablecoin**: OD-01, OD-02, OD-03, LR-03, TO-01, AC-02, AC-03, CR-01
-- **Options**: OD-01, OD-03, CL-02
-- **Liquid Staking**: OD-01, OD-02, LR-01, CR-01
+- **Stablecoin**: OD-01, OD-02, OD-03, OD-04, OD-05, LR-03, TO-01, AC-02, AC-03, CR-01
+- **Options**: OD-01, OD-03, OD-05, CL-02
+- **Liquid Staking**: OD-01, OD-02, OD-05, LR-01, CR-01
 
 ---
 
@@ -310,6 +336,8 @@ curl -X POST http://localhost:3000/api/init
 - Agent 升级详细技术规格：`@docs/agent-upgrade-spec.md`
 - 价格操纵攻击类型体系：`@docs/price-manipulation-patterns.md`
 - 协议类型识别映射：`@docs/protocol-classification-mapping.md`
+- 专家评审报告（14 tasks + H1 完整评估）：`@final.md`
+- 实施手册（任务清单与验收标准）：`@execution-plan.md`
 
 **项目已有文件（无需创建，直接引用）：**
 - 现有漏洞模式数据：`@data/vulnerabilities.json`

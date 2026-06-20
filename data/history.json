@@ -9,7 +9,8 @@
       "attack_contract_address": "https://bscscan.com/address/0x87EFb39a716860eCd2324A944Cb40EC5128e56Dd",
       "victim_contract_address": "https://bscscan.com/address/0x7057f3b0f4d0649b428f0d8378a8a0e7d21d36a7",
       "note": "The CUT token's price protection mechanism, implemented via the transferFunDealTypeContractAddress contract, was vulnerable to price manipulation. The mechanism relied on reserve ratios to calculate rewards and token transfers during liquidity pool operations. The attacker used a flash loan of 4,500,000 USDT to manipulate the USDT-CUT PancakeSwap pool's reserve ratio, adding liquidity with disproportionate token amounts and triggering flawed reward calculations in valuePreservationByRemoveLP(). This allowed the attacker to receive significantly more CUT tokens (275e9 instead of 60.7e9) when removing liquidity, which were then swapped for profit. The vulnerability stemmed from naive conversion of USDT differences to CUT tokens based on manipulable current prices, repeated 40 times to maximize gains.",
-      "vulnerability_pattern": "Oracle Manipulation"
+      "vulnerability_pattern": "Oracle Manipulation",
+      "pattern_ids": ["OD-01", "LR-01"]
     },
     {
       "id": "CASE-002",
@@ -20,7 +21,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x0C8da4f8B823bEe4D5dAb73367D45B5135B50faB",
       "victim_contract_address": "https://etherscan.io/address/0x047D41F2544B7F63A8e991aF2068a363d210d6Da",
       "note": "An estimated loss of ~1.7M USD was caused by a price-manipulation issue in BedRock's mint flow. The PoC shows that the vulnerable vault let the attacker mint uniBTC with ETH under an unsafe pricing assumption, treating the deposited value too favorably. In this incident, the attacker first obtained funding, minted uniBTC through the vulnerable vault, and then used the mispriced output to swap back into WETH for profit.",
-      "vulnerability_pattern": "Flash Loan Attack"
+      "vulnerability_pattern": "Flash Loan Attack",
+      "pattern_ids": ["OD-01", "LR-01"]
     },
     {
       "id": "CASE-003",
@@ -31,7 +33,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x9776c0abe8ae3c9ca958875128f1ae1d5afafcb8",
       "victim_contract_address": "https://etherscan.io/address/0x18775475f50557b96C63E8bbf7D75bFeB412082D",
       "note": "An estimated loss of 8.45 ETH (~$20K USD) was caused by a faulty transfer path in the FIRE token contract. The linked PoC points to the _transfer() logic, which allowed the attacker to manipulate the pair balance and compute an inflated amount of WETH out. In this incident, the attacker repeatedly bought FIRE with flash-loaned WETH, transferred FIRE directly into the WETH/FIRE pair, and then swapped against the distorted reserves to extract WETH.",
-      "vulnerability_pattern": "Reserve Manipulation"
+      "vulnerability_pattern": "Reserve Manipulation",
+      "pattern_ids": ["OD-01", "LR-01"]
     },
     {
       "id": "CASE-004",
@@ -42,7 +45,8 @@
       "attack_contract_address": "https://arbiscan.io/address/0x69fa61eb4dc4e07263d401b01ed1cfceb599dab8",
       "victim_contract_address": "https://arbiscan.io/address/0x6700b021a8bcfae25a2493d16d7078c928c13151",
       "note": "An estimated loss of about $130K was caused by a price-manipulation attack against LavaLending on Arbitrum. The PoC shows the attacker cycling through withdrawals, pool interactions, and multiple borrow operations after distorting the relevant pricing path used by the lending system. In this incident, the attacker manipulated the WETH/USDC pricing environment around the lending markets, inflated the value of the affected position, and then borrowed out USDC, cUSDC, WBTC, and WETH.",
-      "vulnerability_pattern": "Oracle Manipulation"
+      "vulnerability_pattern": "Oracle Manipulation",
+      "pattern_ids": ["OD-01", "LR-02"]
     },
     {
       "id": "CASE-005",
@@ -53,7 +57,8 @@
       "attack_contract_address": "https://bscscan.com/address/0x8408497c18882bfb61be9204cfff530f4ee18320",
       "victim_contract_address": "https://bscscan.com/address/0xbe779d420b7d573c08eee226b9958737b6218888",
       "note": "An estimated loss of 34.88 BNB (~$20K USD) was caused by a price-manipulation flaw in the AIZPT token flow. The PoC shows the attacker flash-borrowing WBNB, sending value into the token contract, and repeatedly transferring AIZPT back to the token contract to abuse its internal accounting. In this incident, the attacker used 8,000 WBNB of temporary liquidity, looped nearly 200 self-transfers, and then converted the manipulated state back into WBNB for profit.",
-      "vulnerability_pattern": "Flash Loan Attack"
+      "vulnerability_pattern": "Flash Loan Attack",
+      "pattern_ids": ["CL-01", "OD-01"]
     },
     {
       "id": "CASE-006",
@@ -64,7 +69,8 @@
       "attack_contract_address": "https://bscscan.com/address/0x8f921e27e3af106015d1c3a244ec4f48dbfcad14",
       "victim_contract_address": "https://bscscan.com/address/0xA2268Fcc2FE7A2Bb755FbE5A7B3Ac346ddFeDB9B",
       "note": "An estimated loss of about $5.8K USDT was caused by unsafe oracle usage in the HYDT minting flow on BSC. The linked analysis explains that the InitialMintV2 contract used the WBNB/USDT pair price directly to determine mint ratios, allowing the attacker to manipulate the oracle with a flash loan. In this incident, the attacker flash-borrowed roughly 11 million USDT, pushed the WBNB/USDT spot price to an abnormal level, called initialMint() with 11 BNB to mint excess HYDT, and then unwound through multiple DEX routes to realize profit.",
-      "vulnerability_pattern": "Oracle Manipulation"
+      "vulnerability_pattern": "Oracle Manipulation",
+      "pattern_ids": ["OD-01", "LR-01"]
     },
     {
       "id": "CASE-007",
@@ -75,7 +81,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x991493900674b10bdf54bdfe95b4e043257798cf",
       "victim_contract_address": "https://etherscan.io/address/0xB23FC1241e1Bc1a5542a438775809d38099838fe",
       "note": "An estimated loss of ~249 ETH (~$600K USD) was caused by a price-manipulation attack spanning thin SASHA liquidity on Ethereum. The PoC shows the attacker buying SASHA with WETH, transferring SASHA into the Uniswap V2 pair, and then dumping through Uniswap V3 after the price had been distorted. In this incident, the attacker used a small initial amount of ETH to push the token into an abnormal pricing state and then extracted WETH from the manipulated market.",
-      "vulnerability_pattern": "Flash Loan Attack"
+      "vulnerability_pattern": "Flash Loan Attack",
+      "pattern_ids": ["OD-01"]
     },
     {
       "id": "CASE-008",
@@ -86,7 +93,8 @@
       "attack_contract_address": "https://bscscan.com/address/0x3f32c7cfb0a78ddea80a2384ceb4633099cbdc98",
       "victim_contract_address": "https://bscscan.com/address/0x6beee2b57b064eac5f432fc19009e3e78734eabc",
       "note": "An estimated loss of 547.18 BNB (~$312K USD) was caused by a bug in the P719 transfer() logic. According to the linked source notes, sending tokens back to P719 was treated like a sell, and the contract's burn-and-fee behavior incorrectly inflated the token price. In this incident, the attacker created an auxiliary token and pair, split the operation across many helper contracts, repeatedly bought and sold P719, and then exited after the manipulated price had been amplified.",
-      "vulnerability_pattern": "Price Calculation Flaw"
+      "vulnerability_pattern": "Price Calculation Flaw",
+      "pattern_ids": ["CL-01"]
     },
     {
       "id": "CASE-009",
@@ -97,7 +105,8 @@
       "attack_contract_address": "https://basescan.org/address/0x7562846468089cf0e8f7b38ac53406b895284901",
       "victim_contract_address": "https://basescan.org/address/0x93D619623abc60A22Ee71a15dB62EedE3EF4dD5a",
       "note": "An estimated loss of about $1M was caused by price manipulation against an unverified Compound-like lending deployment on Base. The linked sources describe an excessive-borrowing scenario after the attacker distorted the asset valuation used by the lending market. In this incident, the attacker manipulated the price dependency in the market, used the inflated collateral state to borrow out assets, and then realized the profit through the mispriced lending contracts.",
-      "vulnerability_pattern": "Oracle Manipulation"
+      "vulnerability_pattern": "Oracle Manipulation",
+      "pattern_ids": ["OD-01", "LR-02"]
     },
     {
       "id": "CASE-010",
@@ -108,7 +117,8 @@
       "attack_contract_address": "https://bscscan.com/address/0x00c0F54D8Afc60F3aCd06E476Cf504A6f7f06180",
       "victim_contract_address": "https://bscscan.com/address/0x42646478b25317160e0dc8db413991277e4bb3c2",
       "note": "An estimated loss of about $450K was caused by a price-manipulation attack against BGM on BSC. The linked case study states that the token's inviter reward mechanism could be abused when multiple accounts shared the same invitee, artificially inflating inviter rewards and enabling withdrawals from the pair. In this incident, the attacker used a prepared contract, manipulated the reward accounting with large batch transactions, withdrew value from the BGM pair, and profited after the spot price had been distorted.",
-      "vulnerability_pattern": "Flash Loan Attack"
+      "vulnerability_pattern": "Flash Loan Attack",
+      "pattern_ids": ["LR-03"]
     },
     {
       "id": "CASE-011",
@@ -119,7 +129,8 @@
       "attack_contract_address": "https://arbiscan.io/address/0x0b2bcf06f740c322bc7276b6b90de08812ce9bfe",
       "victim_contract_address": "https://arbiscan.io/address/0x62cf82fb0484af382714cd09296260edc1dc0c6c",
       "note": "An estimated loss of $4.75M was caused by a price-manipulation and reentry-style attack against Delta Prime on Arbitrum. The PoC shows the attacker creating a SmartLoan position, feeding crafted price data into the loan flow, and abusing reward-claim execution to reenter at a favorable moment. In this incident, the attacker borrowed against a manipulated state, converted collateral and debt positions through the crafted flow, and exited after the protocol's solvency assumptions had been broken.",
-      "vulnerability_pattern": "Flash Loan Attack"
+      "vulnerability_pattern": "Flash Loan Attack",
+      "pattern_ids": ["LR-02", "TO-03"]
     },
     {
       "id": "CASE-012",
@@ -130,7 +141,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x351d38733de3f1e73468d24401c59f63677000c9",
       "victim_contract_address": "https://etherscan.io/address/0x280a8955a11fcd81d72ba1f99d265a48ce39ac2e",
       "note": "An estimated loss of about $447K was caused by a price-manipulation attack involving the vETH/BIF market on Ethereum. The linked PoC and post-mortem show the attacker using a very large flash loan to buy BIF, exploiting a vulnerable factory path, and then selling back after the state had been distorted. In this incident, the attacker borrowed essentially the vault's full WETH balance, pushed the BIF-side pricing through the vulnerable path, and then unwound into WETH before repaying the flash loan.",
-      "vulnerability_pattern": "Flash Loan Attack"
+      "vulnerability_pattern": "Flash Loan Attack",
+      "pattern_ids": ["OD-01"]
     },
     {
       "id": "CASE-013",
@@ -141,7 +153,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x8Ca0392D4997C35FA6dDA2c0b6b8314987FAB554",
       "victim_contract_address": "https://etherscan.io/address/0x553513177faC7142C0F445D721ca7EB22d4215AD",
       "note": "An estimated loss of about $243K was caused by ineffective access control in the operator contract used by HarryPotterObamaSonic10Inu 2.0 on Ethereum. The linked sources explain that the exploiter abused the 0x433e() path in the operator contract to add and remove liquidity in large size, causing dramatic price fluctuations in the token's liquidity pool. In this incident, the attacker repeatedly added and removed liquidity around the BITCOIN/WETH market, extracted value from the manipulated pool, and later routed part of the proceeds into Tornado Cash.",
-      "vulnerability_pattern": "Liquidity Pool Manipulation"
+      "vulnerability_pattern": "Liquidity Pool Manipulation",
+      "pattern_ids": ["AC-02", "LR-01"]
     },
     {
       "id": "CASE-014",
@@ -152,7 +165,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x2cad84c3d2e31bc6d630229901f421e6da5557ef",
       "victim_contract_address": "https://etherscan.io/address/0x05641e33fd15baf819729df55500b07b82eb8e89",
       "note": "An estimated loss of 12.34 ETH (~$41.2K USD) was caused by a flawed liquidity-removal path in the LAURA token system. The PoC comments explain that removeLiquidityWhenKIncreases() could be abused after the attacker reshaped the WETH/LAURA pair with flash-loaned capital. In this incident, the attacker borrowed 30,000 WETH, bought LAURA, added liquidity, triggered the vulnerable liquidity-removal function, and then removed the manipulated LP position to drain WETH from the pair.",
-      "vulnerability_pattern": "Liquidity Pool Manipulation"
+      "vulnerability_pattern": "Liquidity Pool Manipulation",
+      "pattern_ids": ["LR-01", "OD-01"]
     },
     {
       "id": "CASE-015",
@@ -163,7 +177,8 @@
       "attack_contract_address": "https://bscscan.com/address/0x818cd70be0c9dec3b0bc52efaaceb06469ce587f",
       "victim_contract_address": "https://bscscan.com/address/0x384b9fb6e42dab87f3023d87ea1575499a69998e",
       "note": "An estimated loss of about $21K was caused by missing access control in FortuneWheel's swapProfitFees() function on BSC. The linked analysis explains that the function was publicly callable even though it swapped contract-owned assets and should have been restricted. In this incident, the attacker first manipulated the LINK/WBNB pricing environment, then called swapProfitFees() so that the FortuneWheel contract sold LINK at the manipulated rate, allowing the attacker to unwind and keep the profit.",
-      "vulnerability_pattern": "Oracle Manipulation"
+      "vulnerability_pattern": "Oracle Manipulation",
+      "pattern_ids": ["AC-02", "OD-01"]
     },
     {
       "id": "CASE-016",
@@ -174,7 +189,8 @@
       "attack_contract_address": "https://arbiscan.io/address/0xd368cca925bb3dbadd06ea1b81e96a2174830978",
       "victim_contract_address": "https://arbiscan.io/address/0xaffd437801434643b734d0b2853654876f66f7d7",
       "note": "An estimated loss of about $86K was associated with a price-manipulation attack against Paribus on Arbitrum, with Bitfinding reporting that the initial attack path focused on roughly $60K in ETH, USDT, and ARB. The linked sources describe the exploit as combining price manipulation with a bug in the lending flow. In this incident, the attacker deployed an exploit contract, attempted to manipulate the lending platform's valuation path, and borrow or siphon assets from the affected Paribus markets before countermeasures were deployed.",
-      "vulnerability_pattern": "Oracle Manipulation"
+      "vulnerability_pattern": "Oracle Manipulation",
+      "pattern_ids": ["LR-02", "OD-01"]
     },
     {
       "id": "CASE-017",
@@ -185,7 +201,8 @@
       "attack_contract_address": "https://bscscan.com/address/0xaaE196b6E3f3Ee34405e857e7bfb05D74c5cf775",
       "victim_contract_address": "https://bscscan.com/address/0xc10E0319337c7F83342424Df72e73a70A29579B2",
       "note": "An estimated loss of about $65K was caused by faulty transfer and liquidity logic in the AST token on BSC. The linked analysis shows that the attacker could abuse the proxy and pair interaction so that liquidity removal was effectively accounted for twice. In this incident, the attacker flash-borrowed BUSD, swapped into AST, added tokens into the AST/BUSD pair, used skim() and sync() to exploit the accounting bug, and then sold the recovered AST back into BUSD.",
-      "vulnerability_pattern": "Reserve Manipulation"
+      "vulnerability_pattern": "Reserve Manipulation",
+      "pattern_ids": ["LR-01", "CL-01"]
     },
     {
       "id": "CASE-018",
@@ -196,7 +213,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x521e64789578502f6e9106093861830472678dae",
       "victim_contract_address": "https://etherscan.io/address/0x1111111254fb6c44bac0bed2854e76f90643097d",
       "note": "An estimated loss of ~$5M. The exploit targeted a vulnerability in the legacy Fusion v1 contract. The attacker constructed a carefully designed transaction path to invoke affected functions within the outdated smart contracts, manipulating the exchange price for USDC and wETH. The stolen funds belonged to resolvers (entities executing orders) rather than end-users.",
-      "vulnerability_pattern": "Oracle Manipulation"
+      "vulnerability_pattern": "Oracle Manipulation",
+      "pattern_ids": ["OD-01"]
     },
     {
       "id": "CASE-019",
@@ -207,7 +225,8 @@
       "attack_contract_address": "https://bscscan.com/address/0x631adFF068D484Ce531Fb519Cda4042805521641",
       "victim_contract_address": "https://bscscan.com/address/0x18027eF7CC0e7dCe85120f69D0B91B4F4c9E07Bf",
       "note": "An estimated loss of ~$0.7M. The attack stemmed from a lack of validation in the WebKeyDAO contract. The attacker exploited an unprotected function to purchase wkeyDao tokens at a significantly low price and subsequently sold them on a decentralized exchange for profit. The vulnerability occurred because the contract failed to validate the internal token price against the external DEX market price.",
-      "vulnerability_pattern": "Price Calculation Flaw"
+      "vulnerability_pattern": "Price Calculation Flaw",
+      "pattern_ids": ["OD-03", "AC-02"]
     },
     {
       "id": "CASE-020",
@@ -218,7 +237,8 @@
       "attack_contract_address": "https://solscan.io/account/0xde96331a0bcc9f893518d6b106e80d9a476b8ca3",
       "victim_contract_address": "https://app.hyperliquid.xyz/hlp",
       "note": "An initial unrealized loss of ~$12M. The attacker targeted the HLP vault by opening a massive ~$4M short position on the low-liquidity JELLYJELLY memecoin while simultaneously pumping its spot price by over 500% on external exchanges. This forced the protocol's spot-derived oracle to markup prices, triggering a forced liquidation that the HLP vault was required to inherit at the manipulated peak, effectively transferring the attacker's gains as a loss to the vault.",
-      "vulnerability_pattern": "Oracle Manipulation"
+      "vulnerability_pattern": "Oracle Manipulation",
+      "pattern_ids": ["OD-01", "LR-02"]
     },
     {
       "id": "CASE-021",
@@ -229,7 +249,8 @@
       "attack_contract_address": "https://opbnbscan.com/address/0x00faC92881556A90FdB19eAe9F23640B95B4bcBd",
       "victim_contract_address": "https://opbnbscan.com/address/0x3274b668aed85479e2a8511e74d7db7240ebe7c8",
       "note": "An estimated loss of ~$7.5M. The root cause was an access control vulnerability in the price oracle system. The attacker bypassed permission checks by calling the execute method in MinimalForwarder. This allowed them to invoke setPrices to artificially lower the ETH price to $100, open a long position, and then immediately set the price to $10,000 to close the position for a $3.12M profit in a single transaction.",
-      "vulnerability_pattern": "Oracle Manipulation"
+      "vulnerability_pattern": "Oracle Manipulation",
+      "pattern_ids": ["AC-01", "OD-03"]
     },
     {
       "id": "CASE-022",
@@ -240,7 +261,8 @@
       "attack_contract_address": "https://bscscan.com/address/0x637d8Ce897bb653cb83bA436CDf76bBe158f05B1",
       "victim_contract_address": "https://bscscan.com/address/0x95e92B09b89cF31Fa9F1Eca4109A85F88EB08531",
       "note": "An estimated loss of ~$2.16M. The root cause was a mathematical bug in the minting function involving decimal scaling. The contract incorrectly multiplied the price data (already at 18 decimals) by 1e18 a second time. This created a massive inflation error, allowing the attacker to deposit just 0.001 BNB to mint over 9.7 quadrillion MBU tokens, which were then swapped for USDT.",
-      "vulnerability_pattern": "Price Calculation Flaw"
+      "vulnerability_pattern": "Price Calculation Flaw",
+      "pattern_ids": ["CL-02"]
     },
     {
       "id": "CASE-023",
@@ -251,7 +273,8 @@
       "attack_contract_address": "https://etherscan.io/address/0xea6f30e360192bae715599e15e2f765b49e4da98",
       "victim_contract_address": "https://etherscan.io/address/0xCCd90F6435dd78C4ECCED1FA4db0D7242548a2a9",
       "note": "An estimated loss of ~$12M. The exploit utilized a missing access control in a Uniswap V4 hook. The attacker created a malicious fake market using another market's derivative token as the redemption asset (RA). By exploiting the lack of validation in the hook's beforeSwap callback, they tricked the protocol into believing they had deposited RA tokens, allowing them to extract real wstETH reserves through unauthorized token redemptions.",
-      "vulnerability_pattern": "Liquidity Pool Manipulation"
+      "vulnerability_pattern": "Liquidity Pool Manipulation",
+      "pattern_ids": ["AC-02", "CR-04"]
     },
     {
       "id": "CASE-024",
@@ -262,7 +285,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x8970843f260587e86efaa26b837c6a1c26d1744",
       "victim_contract_address": "https://etherscan.io/address/0x6e903a0b12631a0b12631a0b12631a0b12631a0b",
       "note": "An estimated loss of ~$9.6M. The attacker performed a donation attack on cvcrvUSD to inflate its share price in a low-liquidity market. Due to a floor division bug in the exchange rate calculation, once the price was pushed past a specific threshold, the internal rate rounded down to zero. This allowed the attacker to borrow massive amounts of reUSD using only 1 wei of collateral, as the system perceived the position as solvent due to the zero rate.",
-      "vulnerability_pattern": "Price Calculation Flaw"
+      "vulnerability_pattern": "Price Calculation Flaw",
+      "pattern_ids": ["CL-01", "LR-02"]
     },
     {
       "id": "CASE-025",
@@ -273,7 +297,8 @@
       "attack_contract_address": "https://bscscan.com/address/0x0b9a1391269e95162bfec8785e663258c209333b",
       "victim_contract_address": "https://bscscan.com/address/0x84858eff9f49d93039a09d392df2ec6e46d2ea07",
       "note": "An estimated loss of ~$4.6M. The root cause was a fundamental design flaw in the FPC token's tokenomics related to an automatic burn mechanism. The attacker used a flash loan to manipulate the token price and then triggered the burn logic, which incorrectly reduced the pool's token reserves. This distorted the AMM's pricing formula, enabling the attacker to swap tokens at an artificially inflated rate.",
-      "vulnerability_pattern": "Price Calculation Flaw"
+      "vulnerability_pattern": "Price Calculation Flaw",
+      "pattern_ids": ["CL-01", "OD-01"]
     },
     {
       "id": "CASE-026",
@@ -284,7 +309,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x4be0493274b668aed85479e2a8511e74d7db724",
       "victim_contract_address": "https://peapods.finance/",
       "note": "An estimated loss of ~$230K. The attacker exploited low-liquidity Uniswap pools that functioned as TWAP oracles for Pod markets. By skewing the prices in these weakened oracle pools (where liquidity had deteriorated over time), the attacker was able to borrow assets or trigger liquidations at false values that did not reflect the true market price of the collateral.",
-      "vulnerability_pattern": "TWAP Manipulation"
+      "vulnerability_pattern": "TWAP Manipulation",
+      "pattern_ids": ["OD-02", "LR-02"]
     },
     {
       "id": "CASE-027",
@@ -294,8 +320,9 @@
       "attack_transaction": "https://app.blocksec.com/phalcon/explorer/tx/arbitrum/0x03182d3f0956a91c4e4c8f225bbc7975f9434fab042228c7acdc5ec9a32626ef",
       "attack_contract_address": "https://arbiscan.io/address/0x1a3512c1269e95162bfec8785e663258c209333b",
       "victim_contract_address": "https://arbiscan.io/address/0x90037096922bae715599e15e2f765b49e4da983c",
-      "note": "An estimated loss of ~$42M. The attacker exploited a re-entrancy vulnerability in GMX V1's PositionManager. By repeatedly opening and closing BTC shorts within a loop, they manipulated the global short average price. This distorted the protocol's AUM calculation and the resulting GLP token price, allowing the attacker to sell their GLP back to the vault at an artificially inflated price and drain the reserves.",
-      "vulnerability_pattern": "AMM Exploitation"
+      "note": "An estimated loss of ~$42M. The attacker exploited a cross-contract re-entrancy vulnerability in GMX V1's OrderBook/PositionManager. By using executeDecreaseOrder to re-enter increasePosition in the Vault (nonReentrant only covers same-contract calls), they manipulated globalShortAveragePrices in a loop. This distorted the AUM calculation and the resulting GLP token price, allowing the attacker to sell GLP back at an artificially inflated price.",
+      "vulnerability_pattern": "AMM Exploitation",
+      "pattern_ids": ["TO-03"]
     },
     {
       "id": "CASE-028",
@@ -306,7 +333,8 @@
       "attack_contract_address": "https://bscscan.com/address/0xa9edec4496bd013dac805fb221edefc53cbfaf05",
       "victim_contract_address": "https://bscscan.com/address/0x93649277",
       "note": "An estimated loss of ~$85K. The attacker used the new EIP-7702 delegation feature to bypass an EOA only check. By authorizing a malicious contract to their EOA, the attacker triggered fallback logic to execute a flash loan while maintaining a tx.origin that matched the msg.sender. They manipulated the POT token price on PancakeSwap, staked at the inflated price, and later unstaked for a profit of 3.3M tokens compared to the 220k originally deposited.",
-      "vulnerability_pattern": "Flash Loan Attack"
+      "vulnerability_pattern": "Flash Loan Attack",
+      "pattern_ids": ["OD-01", "AC-01"]
     },
     {
       "id": "CASE-029",
@@ -317,7 +345,8 @@
       "attack_contract_address": "https://seiscan.io/address/0xd43d0660601e613f9097d5c75cd04ee0c19e6f65",
       "victim_contract_address": "https://seiscan.io/address/0x14bb98581ac1f1a43fd148db7d7d793308dc4d80",
       "note": "The attacker abused swap parameters to execute transferFrom via executor and drained tokens from a user who had approved the router.",
-      "vulnerability_pattern": "Slippage Control Bypass"
+      "vulnerability_pattern": "Slippage Control Bypass",
+      "pattern_ids": ["TO-02", "AC-01"]
     },
     {
       "id": "CASE-030",
@@ -328,7 +357,8 @@
       "attack_contract_address": "https://etherscan.io/address/0xb8e0a4758df2954063ca4ba3d094f2d6eda9b993",
       "victim_contract_address": "https://etherscan.io/address/0x46f54d434063e5f1a2b2cc6d9aaa657b1b9ff82c",
       "note": "The attacker exploited the borrowing logic of multiple Cauldron contracts integrated with BentoBox. By repeatedly invoking the cook() function with crafted parameters, the attacker borrowed large amounts of MIM without proper collateral constraints. The borrowed MIM was then withdrawn from BentoBox, swapped to 3CRV via Curve, converted to USDT by removing liquidity from Curve 3Pool, and finally exchanged to WETH on Uniswap V3. This sequence allowed the attacker to aggregate liquidity from multiple pools and convert it into WETH, resulting in approximately $1.7M profit.",
-      "vulnerability_pattern": "Flash Loan Attack"
+      "vulnerability_pattern": "Flash Loan Attack",
+      "pattern_ids": ["LR-02", "CR-03"]
     },
     {
       "id": "CASE-031",
@@ -339,7 +369,8 @@
       "attack_contract_address": "https://etherscan.io/address/0x54B53503c0e2173Df29f8da735fBd45Ee8aBa30d",
       "victim_contract_address": "https://etherscan.io/address/0xDACf5Fa19b1f720111609043ac67A9818262850c",
       "note": "The attacker exploited Balancer Composable Stable Pools through a precision-loss and pool-accounting manipulation strategy using carefully crafted batchSwap(GIVEN_OUT) steps. The attack contract targeted the osETH/wETH and wstETH/wETH pools, first manipulating pool balances and scaling-factor-related calculations, then repeatedly performing swaps to distort the pool state and internal balances. After that, the attacker withdrew the accumulated internal balances via manageUserBalance, transferring the stolen assets to the beneficiary address.",
-      "vulnerability_pattern": "Price Calculation Flaw"
+      "vulnerability_pattern": "Price Calculation Flaw",
+      "pattern_ids": ["CL-01"]
     },
     {
       "id": "CASE-032",
@@ -350,7 +381,8 @@
       "attack_contract_address": "https://basescan.org/address/0x702980b1ed754c214b79192a4d7c39106f19bce9",
       "victim_contract_address": "https://basescan.org/address/0xdac30a5e2612206e2756836ed6764ec5817e6fff",
       "note": "The attacker exploited the reward distribution logic in the stPRXVT staking contract. After swapping ETH to obtain PRXVT tokens, the attacker staked a large amount into the vulnerable contract. The exploit then repeatedly deployed temporary helper contracts using CREATE2, transferred staked tokens to those contracts, and called earned() followed by claimReward(). Because the reward calculation relied on account state that was not properly updated or isolated per deployment, each newly created contract was able to repeatedly claim rewards as if it were a fresh participant. The attacker looped this process multiple times, collecting inflated rewards and transferring both PRXVT and stPRXVT back to the main attack contract. Finally, all accumulated tokens were withdrawn to the attacker address, resulting in approximately 32.8 ETH profit.",
-      "vulnerability_pattern": "Liquidity Pool Manipulation"
+      "vulnerability_pattern": "Liquidity Pool Manipulation",
+      "pattern_ids": ["LR-03", "CL-01"]
     },
     {
       "id": "CASE-033",
@@ -361,8 +393,9 @@
       "attack_contract_address": "https://bscscan.com/address/0x3a061967288230b5DF4354E727E928dc43F26B3D",
       "victim_contract_address": "https://bscscan.com/address/0x239AF915abcD0a5DCB8566e863088423831951f8",
       "note": "The attacker crafted swap parameters to call transferFrom via executor, pulling tokens from a user who had approved the router.",
-      "vulnerability_pattern": "Slippage Control Bypass"
+      "vulnerability_pattern": "Slippage Control Bypass",
+      "pattern_ids": ["TO-02", "AC-01"]
     }
   ],
-  "lastUpdated": "2026-03-05T00:00:00.000Z"
+  "lastUpdated": "2026-06-12T00:00:00.000Z"
 }

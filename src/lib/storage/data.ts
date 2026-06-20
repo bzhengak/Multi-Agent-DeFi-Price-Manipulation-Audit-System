@@ -1,5 +1,4 @@
 import { saveJSON, loadJSON, deleteFile } from './blob';
-
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface HistoryCase {
@@ -74,15 +73,64 @@ export async function saveHistoryCases(data: HistoryCasesData): Promise<void> {
 
 // ─── Vulnerability Patterns ─────────────────────────────────────────────────
 
+// In-memory cache for vulnerability patterns (5 minute TTL per T6 spec)
+let patternsCache: { data: VulnerabilityPattern[]; timestamp: number } | null = null;
+const PATTERNS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 export async function loadVulnerabilityPatterns(): Promise<VulnerabilityPatternsData> {
+  // Check in-memory cache first
+  if (patternsCache && Date.now() - patternsCache.timestamp < PATTERNS_CACHE_TTL) {
+    return { patterns: patternsCache.data };
+  }
+
+  // T6: Try Prisma first (source of truth after ingest)
+  try {
+    const { prisma } = await import('@/lib/prisma');
+    if (prisma.vulnerabilityPattern) {
+      const dbPatterns = await prisma.vulnerabilityPattern.findMany({
+        orderBy: { id: 'asc' },
+      });
+      if (dbPatterns.length > 0) {
+        const patterns: VulnerabilityPattern[] = dbPatterns.map((db) => ({
+          id: db.id,
+          category: db.category,
+          name: db.name,
+          code_features: JSON.parse(db.codeFeatures),
+          related_attacks: JSON.parse(db.relatedAttacks),
+          severity: db.severity as VulnerabilityPattern['severity'],
+          references: {
+            swc: db.swcRefs || '',
+            owasp: db.owaspRefs || '',
+          },
+        }));
+        patternsCache = { data: patterns, timestamp: Date.now() };
+        return { patterns };
+      }
+    }
+  } catch {
+    // Prisma not available (not migrated or client not generated), fall through to JSON
+  }
+
+  // Fallback: read from JSON file (original behavior)
   const data = await loadJSON<VulnerabilityPattern[] | { patterns: VulnerabilityPattern[]; lastUpdated?: string }>(FILES.VULNERABILITY_PATTERNS);
   if (!data) return { patterns: [] };
-  if (Array.isArray(data)) return { patterns: data };
-  return { patterns: (data as { patterns: VulnerabilityPattern[] }).patterns || [] };
+  const patterns = Array.isArray(data)
+    ? data
+    : (data as { patterns: VulnerabilityPattern[] }).patterns || [];
+  patternsCache = { data: patterns, timestamp: Date.now() };
+  return { patterns };
 }
 
 export async function saveVulnerabilityPatterns(data: VulnerabilityPatternsData): Promise<void> {
+  // Write to JSON file (always, as backup/source of truth)
   await saveJSON(FILES.VULNERABILITY_PATTERNS, data.patterns);
+  // Invalidate cache
+  patternsCache = null;
+}
+
+/** Clear the patterns cache (useful after ingest operations) */
+export function clearPatternsCache(): void {
+  patternsCache = null;
 }
 
 // ─── Analysis History ───────────────────────────────────────────────────────

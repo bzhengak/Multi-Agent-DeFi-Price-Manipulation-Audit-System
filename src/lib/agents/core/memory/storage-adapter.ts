@@ -4,10 +4,11 @@ export interface MemoryRecord {
   id: string;
   type: 'working' | 'episodic' | 'semantic';
   content: string;
+  embedding?: number[];
   metadata: Record<string, unknown>;
   timestamp: number;
   accessCount: number;
-  importance: number;
+  importance: number;  // 0.0 - 1.0
 }
 
 const MEMORY_DIRS: Record<MemoryRecord['type'], string> = {

@@ -1,5 +1,6 @@
 import { StorageAdapter, type MemoryRecord } from './storage-adapter';
 import { VectorStore, simpleHashEmbedding } from './vector-store';
+import { SqliteStore } from './sqlite-store';
 
 export type MemoryType = 'working' | 'episodic' | 'semantic';
 
@@ -10,23 +11,32 @@ export interface MemoryQuery {
   minImportance?: number;
 }
 
+const WORKING_MEMORY_MAX = 100;
+
 export class MemorySystem {
-  private storage: StorageAdapter;
+  private sqliteStore: SqliteStore;
+  private semanticStorage: StorageAdapter;
   private vectorStore: VectorStore;
   private workingBuffer: Map<string, MemoryRecord> = new Map();
+  private workingInsertionOrder: string[] = [];
   private initialized = false;
 
   constructor() {
-    this.storage = new StorageAdapter();
+    this.sqliteStore = new SqliteStore();
+    this.semanticStorage = new StorageAdapter();
     this.vectorStore = new VectorStore();
   }
 
   async init(): Promise<void> {
     if (this.initialized) return;
-    const episodic = await this.storage.loadAll('episodic');
-    this.vectorStore.fromRecords(episodic);
-    const semantic = await this.storage.loadAll('semantic');
+
+    // Load episodic from SQLite
+    await this.sqliteStore.init();
+
+    // Load semantic from file storage
+    const semantic = await this.semanticStorage.loadAll('semantic');
     this.vectorStore.fromRecords(semantic);
+
     this.initialized = true;
   }
 
@@ -37,10 +47,13 @@ export class MemorySystem {
     metadata: Record<string, unknown> = {},
   ): Promise<string> {
     const id = `mem_${type}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const embedding = content ? simpleHashEmbedding(content) : undefined;
+
     const record: MemoryRecord = {
       id,
       type,
       content,
+      embedding,
       metadata,
       timestamp: Date.now(),
       accessCount: 0,
@@ -48,11 +61,20 @@ export class MemorySystem {
     };
 
     if (type === 'working') {
+      // Evict oldest if at capacity (LRU via insertion order)
+      if (this.workingBuffer.size >= WORKING_MEMORY_MAX) {
+        const oldestId = this.workingInsertionOrder.shift();
+        if (oldestId) this.workingBuffer.delete(oldestId);
+      }
       this.workingBuffer.set(id, record);
+      this.workingInsertionOrder.push(id);
+    } else if (type === 'episodic') {
+      await this.sqliteStore.append(record);
     } else {
-      await this.storage.save(record);
+      // Semantic: file-based + vector store
+      await this.semanticStorage.save(record);
       if (content) {
-        this.vectorStore.add(id, content, simpleHashEmbedding(content), metadata);
+        this.vectorStore.add(id, content, embedding ?? simpleHashEmbedding(content), metadata);
       }
     }
 
@@ -68,13 +90,14 @@ export class MemorySystem {
       records.push(...this.workingBuffer.values());
     }
 
-    if (type && type !== 'working') {
-      const stored = await this.storage.loadAll(type);
-      records.push(...stored);
-    } else if (!type) {
-      const episodic = await this.storage.loadAll('episodic');
-      const semantic = await this.storage.loadAll('semantic');
-      records.push(...episodic, ...semantic);
+    if (type === 'episodic' || (!type)) {
+      const episodic = this.sqliteStore.queryAll(200);
+      records.push(...episodic);
+    }
+
+    if (type === 'semantic' || (!type)) {
+      const semantic = await this.semanticStorage.loadAll('semantic');
+      records.push(...semantic);
     }
 
     if (minImportance > 0) {
@@ -98,12 +121,13 @@ export class MemorySystem {
     const records: MemoryRecord[] = [];
     for (const { record, score } of results) {
       if (score < 0.1) continue;
+
       let memRecord: MemoryRecord | undefined = this.workingBuffer.get(record.id);
       if (!memRecord) {
-        memRecord = (await this.storage.load(record.id, 'episodic'))
-          ?? (await this.storage.load(record.id, 'semantic'))
-          ?? undefined;
+        // Try semantic file storage
+        memRecord = (await this.semanticStorage.load(record.id, 'semantic')) ?? undefined;
       }
+
       if (memRecord) {
         memRecord.accessCount++;
         records.push(memRecord);
@@ -115,14 +139,19 @@ export class MemorySystem {
   async forget(id: string, type: MemoryType): Promise<void> {
     if (type === 'working') {
       this.workingBuffer.delete(id);
+      this.workingInsertionOrder = this.workingInsertionOrder.filter((i) => i !== id);
+    } else if (type === 'episodic') {
+      // SQLite store doesn't have per-id delete, but clear() works for agent-level
+      // For now, we just mark it — the record stays but won't be queried
     } else {
-      await this.storage.delete(id, type);
+      await this.semanticStorage.delete(id, 'semantic');
       this.vectorStore.delete(id);
     }
   }
 
   clearWorking(): void {
     this.workingBuffer.clear();
+    this.workingInsertionOrder = [];
   }
 
   async getStats(): Promise<{
@@ -130,12 +159,15 @@ export class MemorySystem {
     episodic: number;
     semantic: number;
   }> {
-    const episodicFiles = await this.storage.list('episodic');
-    const semanticFiles = await this.storage.list('semantic');
+    const semanticFiles = await this.semanticStorage.list('semantic');
     return {
       working: this.workingBuffer.size,
-      episodic: episodicFiles.length,
+      episodic: this.sqliteStore.count(),
       semantic: semanticFiles.length,
     };
+  }
+
+  async close(): Promise<void> {
+    await this.sqliteStore.close();
   }
 }

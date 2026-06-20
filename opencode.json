@@ -29,7 +29,7 @@
     }
   },
   "instructions": [
-    "docs/agent-upgrade-spec.md",
+    "execution-plan.md",
     "docs/price-manipulation-patterns.md",
     "docs/protocol-classification-mapping.md"
   ],
@@ -37,9 +37,20 @@
     "filesystem": {
       "type": "local",
       "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "./src", "./data", "./docs"],
-      "enabled": true,
       "timeout": 10000
     },
+    "pulse-fetch": {
+      "type": "local",
+      "command": ["npx", "-y", "@pulsemcp/pulse-fetch"],
+      "timeout": 10000
+    }
+    ,
+    "search-fetch": {
+      "type": "local",
+      "command": ["npx", "-y", "search-fetch-mcp"],
+      "enabled": true
+    }
+    ,
     "github": {
       "type": "local",
       "command": ["npx", "-y", "@modelcontextprotocol/server-github"],
@@ -61,7 +72,6 @@
       "environment": {
         "BRAVE_API_KEY": "{env:BRAVE_API_KEY}"
       },
-      "enabled": false,
       "timeout": 15000
     },
     "drawio": {

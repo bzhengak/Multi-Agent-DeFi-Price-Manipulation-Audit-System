@@ -129,21 +129,21 @@
 
 | 协议类型 | 优先检测漏洞（按优先级排序） |
 |----------|---------------------------|
-| **dex** | OD-01, OD-02, OD-03, TO-01, TO-02, LR-01, LR-03, CL-01, CL-03, CR-03 |
+| **dex** | OD-01, OD-02, OD-03, OD-04, OD-05, TO-01, TO-02, LR-01, LR-03, CL-01, CL-03, CR-03, CR-04 |
 
-| **amm** | OD-01, OD-02, OD-03, LR-01, LR-03, TO-01, TO-02, TO-03, CL-01, CL-03, CR-03 |
+| **amm** | OD-01, OD-02, OD-03, OD-04, OD-05, LR-01, LR-03, TO-01, TO-02, TO-03, CL-01, CL-03, CR-03, CR-04 |
 
-| **lending** | OD-01, OD-02, OD-03, LR-01, LR-02, TO-01, TO-03, CL-02, CR-01 |
+| **lending** | OD-01, OD-02, OD-03, OD-04, OD-05, LR-01, LR-02, TO-01, TO-03, CL-02, CR-01, CR-04 |
 
-| **perp** | OD-01, OD-02, OD-03, LR-01, LR-02, TO-01, TO-02, CL-02, CR-01, CR-03 |
+| **perp** | OD-01, OD-02, OD-03, OD-04, OD-05, LR-01, LR-02, TO-01, TO-02, CL-02, CR-01, CR-03, CR-04 |
 
-| **yield_aggregator** | LR-01, LR-03, TO-01, CR-01, CR-02, CR-03 |
+| **yield_aggregator** | LR-01, LR-03, TO-01, CR-01, CR-02, CR-03, CR-04 |
 
-| **bridge** | LR-03, CL-02, CR-01, CR-02, CR-03, AC-02 |
+| **bridge** | LR-03, CL-02, CR-01, CR-02, CR-03, CR-04, AC-02 |
 
-| **stablecoin** | OD-01, OD-02, OD-03, LR-03, TO-01, AC-02, AC-03, CR-01 |
+| **stablecoin** | OD-01, OD-02, OD-03, OD-04, OD-05, LR-03, TO-01, AC-02, AC-03, CR-01, CR-04 |
 
-| **unknown** | OD-01, OD-02, LR-01, TO-01, TO-02 |
+| **unknown** | OD-01, OD-02, OD-03, OD-04, OD-05, LR-01, TO-01, TO-02 |
 
 ---
 
@@ -183,7 +183,8 @@
 | OD-01 (Oracle Spot Price) | dex, amm, perp, lending |
 | OD-02 (Short TWAP) | amm, dex |
 | OD-03 (Centralized Feed) | dex, amm, perp, lending, stablecoin |
-| OD-04 (Stale Oracle) | dex, amm, perp, lending |
+| OD-04 (Stale Oracle) | dex, amm, perp, lending, stablecoin |
+| OD-05 (Heartbeat Missing) | dex, amm, perp, lending, stablecoin |
 | LR-01 (Instant Reserve) | amm, dex, perp, lending |
 | LR-02 (Collateral Ratio) | lending, perp |
 | LR-03 (TVL-Driven) | amm, dex, bridge, stablecoin, yield_aggregator |
@@ -199,6 +200,7 @@
 | CR-01 (Sole External Source) | lending, perp, yield_aggregator, bridge, stablecoin |
 | CR-02 (LP Token Value) | yield_aggregator, bridge |
 | CR-03 (Cross-Protocol Call) | amm, dex, perp, yield_aggregator, bridge |
+| CR-04 (Cross-Protocol Price Dependency) | amm, dex, perp, lending, yield_aggregator, bridge, stablecoin |
 
 ---
 

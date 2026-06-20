@@ -1,6 +1,6 @@
 # 价格操纵攻击类型体系
 
-> 本文档定义了系统聚焦的 19 种价格操纵漏洞模式（6 大类），由 `@docs/price-manipulation-patterns.md` 引用加载。所有分析 Agent 必须覆盖以下模式。
+> 本文档定义了系统聚焦的 21 种价格操纵漏洞模式（6 大类），由 `@docs/price-manipulation-patterns.md` 引用加载。所有分析 Agent 必须覆盖以下模式。
 
 ---
 
@@ -73,6 +73,23 @@
 - **即时**：添加 updatedAt 检查；设置最大数据时效
 - **短期**：实现 roundId 递增验证；添加心跳检测
 - **长期**：集成 Chainlink 带时间戳的最新数据接口
+
+### OD-05 — Oracle Update Heartbeat / Delay Tolerance Missing（预言机更新心跳/延迟容忍缺失）[High]
+
+**攻击原理**：合约依赖 Chainlink 等预言机的 latestRoundData()，但未验证 updatedAt 是否在合理时间范围内（如未检查 block.timestamp - updatedAt > 1 小时），允许在预言机停止更新时使用过期价格。
+
+**检测指标**：
+| 指标 | 权重 | 说明 |
+|------|------|------|
+| 未检查 updatedAt 时效性 | 高 | 未比较 block.timestamp - updatedAt |
+| 无心跳超时回退机制 | 高 | 预言机停更时无保护措施 |
+| 接受任意陈旧价格 | 高 | 无最大延迟容忍度 |
+| 缺乏价格更新频率监控 | 中 | 无法检测到预言机异常 |
+
+**防御策略**：
+- **即时**：添加 block.timestamp - updatedAt 检查；设置最大延迟阈值（如 1 小时）
+- **短期**：实现多预言机心跳交叉验证；添加价格更新监控
+- **长期**：部署链下监控机器人，确保预言机及时更新
 
 ---
 
@@ -343,6 +360,23 @@
 - **短期**：添加调用后状态一致性验证
 - **长期**：使用标准化的跨协议交互接口
 
+### CR-04 — Unverified Cross-Protocol Price Dependency（未验证的跨协议价格依赖）[High]
+
+**攻击原理**：协议 B 的清算或定价逻辑依赖于协议 A 的流动性或价格，且未对价格偏差进行验证。攻击者可操纵协议 A 的储备间接扭曲协议 B 的价格，形成跨协议级联攻击。
+
+**检测指标**：
+| 指标 | 权重 | 说明 |
+|------|------|------|
+| 定价函数调用了外部 AMM 的 getReserves | 高 | 外部储备可被操纵 |
+| 无跨协议价格偏差检查 | 高 | 未验证来源价格是否合理 |
+| 未使用 TWAP 或链下预言机交叉验证 | 高 | 单一外部路径依赖 |
+| 依赖链深度 ≥ 2 的外部调用链 | 高 | 间接价格依赖风险 |
+
+**防御策略**：
+- **即时**：添加价格偏差阈值检查；实现断路器机制
+- **短期**：使用多源价格聚合和交叉验证
+- **长期**：减少对外部协议的定价依赖，建立独立的价格发现机制
+
 ---
 
 ## 交叉类别关系
@@ -354,7 +388,9 @@ LR-01 (Instant Reserve) ──enables──→ OD-01 (Spot Price)
 LR-01 (Instant Reserve) ──enables──→ LR-03 (TVL-Driven Fees)
 OD-01 (Spot Price) ──amplifies──→ LR-02 (Collateral Ratio)
 OD-03 (Centralized Feed) ──enables──→ OD-01 (Spot Price)
+OD-04 (Stale Oracle) ──amplifies──→ OD-05 (Heartbeat Missing)
 CR-01 (External Price Source) ──amplifies──→ OD-01 (Spot Price)
+CR-04 (Cross-Protocol Price) ──enables──→ CR-01 (Sole External Source)
 TO-01 (No Deadline) ──requires──→ TO-02 (Slippage)
 ```
 
@@ -362,6 +398,8 @@ TO-01 (No Deadline) ──requires──→ TO-02 (Slippage)
 
 1. **经典闪电贷到预言机链**：LR-01 → OD-01 → LR-03（闪电贷储备操纵 → 现货价格扭曲 → 费用/奖励操纵）
 2. **预言机喂价到清算链**：OD-03 → LR-02（中心化喂价被篡改 → 触发不公平清算）
-3. **MEV 夹击链**：TO-01 → TO-02（无截止时间 + 无滑点保护 → 三明治攻击）
-4. **跨协议级联链**：CR-01 → CR-03（单一外部价格源被操纵 → 跨协议状态不一致）
-5. **特权滥用级联链**：AC-01 → AC-02 → OD-03（预言机地址被修改 → 参数被调整 → 喂价被污染）
+3. **预言机过期级联链**：OD-04 → OD-05（陈旧预言机数据 → 心跳缺失导致持续使用过期价格）
+4. **MEV 夹击链**：TO-01 → TO-02（无截止时间 + 无滑点保护 → 三明治攻击）
+5. **跨协议级联链**：CR-01 → CR-03（单一外部价格源被操纵 → 跨协议状态不一致）
+6. **跨协议间接价格操纵链**：CR-04 → CR-01（外部协议价格被操纵 → 间接传导至目标协议）
+7. **特权滥用级联链**：AC-01 → AC-02 → OD-03（预言机地址被修改 → 参数被调整 → 喂价被污染）

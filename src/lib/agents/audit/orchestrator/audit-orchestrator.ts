@@ -11,6 +11,7 @@ import { LLMClient } from '../../core/llm-client';
 import { REPORT_SYSTEM_PROMPT } from '../../prompts/report';
 import { VULNERABILITY_SYSTEM_PROMPT } from '../../prompts/vulnerability';
 import { loadHistoryCases } from '@/lib/storage/data';
+import { computeBudget } from '@/lib/iteration/budget';
 
 export interface OrchestratorProgress {
   stage: string;
@@ -19,6 +20,32 @@ export interface OrchestratorProgress {
 }
 
 export type ProgressCallback = (progress: OrchestratorProgress) => void;
+
+export type StageName =
+  | 'protocol_detection'
+  | 'context_building'
+  | 'vulnerability_analysis'
+  | 'attack_reconstruction'
+  | 'confidence_calibration'
+  | 'report_generation';
+
+const DEFAULT_STAGE_BUDGETS: Record<StageName, number> = {
+  protocol_detection: 5_000,
+  context_building: 10_000,
+  vulnerability_analysis: 600_000,
+  attack_reconstruction: 60_000,
+  confidence_calibration: 5_000,
+  report_generation: 60_000,
+};
+
+export class StageTimeoutError extends Error {
+  stage: StageName;
+  constructor(stage: StageName, budgetMs: number) {
+    super(`Stage "${stage}" timed out after ${budgetMs}ms`);
+    this.name = 'StageTimeoutError';
+    this.stage = stage;
+  }
+}
 
 export interface AuditResult {
   analysisResult: VulnerabilityAnalysisResult;
@@ -47,8 +74,13 @@ export class AuditOrchestrator {
   private llm: LLMClient;
   private onProgress?: ProgressCallback;
   private readonly totalTimeout: number;
+  private readonly stageBudgets: Record<StageName, number>;
 
-  constructor(onProgress?: ProgressCallback, totalTimeout: number = 1000000) {
+  constructor(
+    onProgress?: ProgressCallback,
+    totalTimeout: number = 1000000,
+    stageBudgets?: Partial<Record<StageName, number>>,
+  ) {
     this.detector = new ProtocolTypeDetector();
     this.contextManager = new ContextManager();
     this.reconstructor = new PriceManipulationReconstructor();
@@ -56,6 +88,15 @@ export class AuditOrchestrator {
     this.llm = new LLMClient({ maxRetries: 3, temperature: 0.1, maxTokens: 8192 });
     this.onProgress = onProgress;
     this.totalTimeout = totalTimeout;
+    this.stageBudgets = { ...DEFAULT_STAGE_BUDGETS, ...stageBudgets };
+  }
+
+  private async runStage<T>(stage: StageName, fn: () => Promise<T>): Promise<T> {
+    const budget = this.stageBudgets[stage];
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new StageTimeoutError(stage, budget)), budget);
+    });
+    return Promise.race([fn(), timeoutPromise]);
   }
 
   async run(
@@ -105,64 +146,74 @@ export class AuditOrchestrator {
 
     // Step 1: Protocol Detection (parallel-ready with context build)
     this.emit({ stage: 'protocol_detection', progress: 5, details: 'Identifying protocol type...' });
-    const classification = this.detector.detect(sourceCode);
+    const classification = await this.runStage('protocol_detection', async () => this.detector.detect(sourceCode));
     this.emit({ stage: 'protocol_detection', progress: 10, details: `Detected: ${classification.type} (confidence: ${classification.confidence})` });
 
     // Step 2: Context Build (parallel with detection in spec, but detection result feeds context)
     this.emit({ stage: 'context_building', progress: 15, details: 'Building analysis context...' });
-    const context = await this.contextManager.build(
-      sourceCode,
-      contractName,
-      blockchain,
-      classification,
-      address,
-      'deep',
+    const context = await this.runStage('context_building', () =>
+      this.contextManager.build(
+        sourceCode,
+        contractName,
+        blockchain,
+        classification,
+        address,
+        'deep',
+      ),
     );
 
-    // Step 3: Vulnerability Analysis (multi-round iterative)
-    this.emit({ stage: 'vulnerability_analysis', progress: 20, details: 'Running multi-round vulnerability analysis...' });
+    // Step 3: Vulnerability Analysis (multi-round iterative, adaptive budget)
+    const topPatternId = classification.priorityVulnerabilities[0] ?? 'OD-01';
+    const budget = computeBudget(classification, topPatternId, null);
+    this.emit({ stage: 'vulnerability_analysis', progress: 20, details: `Running multi-round vulnerability analysis (budget: ${budget.maxIterations} iterations, confidence threshold: ${budget.confidenceThreshold})...` });
     const vulnAgent = new VulnerabilityAnalysisAgent(
       sourceCode,
       contractName,
       blockchain,
       address,
-      5,
+      budget.maxIterations,
     );
 
-    const agentResult = await vulnAgent.run();
+    const agentResult = await this.runStage('vulnerability_analysis', () => vulnAgent.run());
     const analysisResult = (agentResult.data as { analysisResult: VulnerabilityAnalysisResult }).analysisResult;
     const iterationCount = (agentResult.data as { iterationCount: number }).iterationCount;
     this.emit({ stage: 'vulnerability_analysis', progress: 50, details: `Found ${analysisResult.vulnerabilities.length} vulnerabilities in ${iterationCount} iterations` });
 
     // Step 4: Attack Reconstruction
     this.emit({ stage: 'attack_reconstruction', progress: 55, details: 'Reconstructing attack scenarios...' });
-    const reconstruction = await this.reconstructor.reconstruct(
-      analysisResult.vulnerabilities,
-      classification,
+    const reconstruction = await this.runStage('attack_reconstruction', () =>
+      this.reconstructor.reconstruct(
+        analysisResult.vulnerabilities,
+        classification,
+      ),
     );
     this.emit({ stage: 'attack_reconstruction', progress: 70, details: `${reconstruction.summary.totalAttacks} attacks reconstructed, ${reconstruction.combinedAttackChains.length} combined chains` });
 
     // Step 5: Confidence Calibration
     this.emit({ stage: 'confidence_calibration', progress: 75, details: 'Calibrating confidence scores...' });
-    const calibratedResult = this.calibrator.calibrate(
-      analysisResult.vulnerabilities,
-      reconstruction,
-      classification,
-      iterationCount,
-      true,
+    const calibratedResult = await this.runStage('confidence_calibration', async () =>
+      this.calibrator.calibrate(
+        analysisResult.vulnerabilities,
+        reconstruction,
+        classification,
+        iterationCount,
+        true,
+      ),
     );
     this.emit({ stage: 'confidence_calibration', progress: 80, details: `Overall confidence: ${calibratedResult.overallConfidence}` });
 
     // Step 6: Report Generation
     this.emit({ stage: 'report_generation', progress: 85, details: 'Generating audit report...' });
-    const reportMarkdown = await this.generateEnhancedReport(
-      analysisResult,
-      reconstruction,
-      calibratedResult,
-      classification,
-      contractName,
-      blockchain,
-      address,
+    const reportMarkdown = await this.runStage('report_generation', () =>
+      this.generateEnhancedReport(
+        analysisResult,
+        reconstruction,
+        calibratedResult,
+        classification,
+        contractName,
+        blockchain,
+        address,
+      ),
     );
     this.emit({ stage: 'report_generation', progress: 95, details: 'Report generated' });
 
@@ -203,17 +254,19 @@ export class AuditOrchestrator {
     const placeholderCode = `// Source code unavailable for case ${caseId}\n// Attack description: ${caseNote}\n// Vulnerability pattern: ${vulnerabilityPattern}`;
 
     this.emit({ stage: 'protocol_detection', progress: 5, details: 'Inferring protocol type from case metadata...' });
-    const classification = this.detector.detect(placeholderCode);
+    const classification = await this.runStage('protocol_detection', async () => this.detector.detect(placeholderCode));
     this.emit({ stage: 'protocol_detection', progress: 10, details: `Inferred: ${classification.type} (confidence: ${classification.confidence})` });
 
     this.emit({ stage: 'context_building', progress: 15, details: 'Building context from case metadata...' });
-    const context = await this.contextManager.build(
-      placeholderCode,
-      caseId,
-      blockchain,
-      classification,
-      contractAddress,
-      'standard',
+    const context = await this.runStage('context_building', () =>
+      this.contextManager.build(
+        placeholderCode,
+        caseId,
+        blockchain,
+        classification,
+        contractAddress,
+        'standard',
+      ),
     );
 
     this.emit({ stage: 'vulnerability_analysis', progress: 20, details: 'Running context-based vulnerability analysis...' });
@@ -265,38 +318,46 @@ ${JSON.stringify(context.relevantPatterns, null, 2)}
 
 Please output the complete analysis results in the specified JSON format. Set codeQuality.overallScore to "F" since source code is unavailable.`;
 
-    const analysisResult = await this.llm.getJSON<VulnerabilityAnalysisResult>(
-      VULNERABILITY_SYSTEM_PROMPT,
-      contextPrompt,
+    const analysisResult = await this.runStage('vulnerability_analysis', () =>
+      this.llm.getJSON<VulnerabilityAnalysisResult>(
+        VULNERABILITY_SYSTEM_PROMPT,
+        contextPrompt,
+      ),
     );
     this.emit({ stage: 'vulnerability_analysis', progress: 50, details: `Inferred ${analysisResult.vulnerabilities.length} vulnerabilities from context` });
 
     this.emit({ stage: 'attack_reconstruction', progress: 55, details: 'Reconstructing attack scenarios...' });
-    const reconstruction = await this.reconstructor.reconstruct(
-      analysisResult.vulnerabilities,
-      classification,
+    const reconstruction = await this.runStage('attack_reconstruction', () =>
+      this.reconstructor.reconstruct(
+        analysisResult.vulnerabilities,
+        classification,
+      ),
     );
     this.emit({ stage: 'attack_reconstruction', progress: 70, details: `${reconstruction.summary.totalAttacks} attacks reconstructed` });
 
     this.emit({ stage: 'confidence_calibration', progress: 75, details: 'Calibrating confidence scores...' });
-    const calibratedResult = this.calibrator.calibrate(
-      analysisResult.vulnerabilities,
-      reconstruction,
-      classification,
-      1,
-      false,
+    const calibratedResult = await this.runStage('confidence_calibration', async () =>
+      this.calibrator.calibrate(
+        analysisResult.vulnerabilities,
+        reconstruction,
+        classification,
+        1,
+        false,
+      ),
     );
     this.emit({ stage: 'confidence_calibration', progress: 80, details: `Overall confidence: ${calibratedResult.overallConfidence}` });
 
     this.emit({ stage: 'report_generation', progress: 85, details: 'Generating audit report...' });
-    const reportMarkdown = await this.generateEnhancedReport(
-      analysisResult,
-      reconstruction,
-      calibratedResult,
-      classification,
-      caseId,
-      blockchain,
-      contractAddress,
+    const reportMarkdown = await this.runStage('report_generation', () =>
+      this.generateEnhancedReport(
+        analysisResult,
+        reconstruction,
+        calibratedResult,
+        classification,
+        caseId,
+        blockchain,
+        contractAddress,
+      ),
     );
     this.emit({ stage: 'report_generation', progress: 95, details: 'Report generated' });
 

@@ -24,6 +24,25 @@ export interface FundFlow {
   step: number;
 }
 
+export interface PatternOverlay {
+  name: string;
+  category: string;
+  difficulty: DifficultyLevel;
+  stepOverrides?: Partial<Record<AttackPhase, Partial<AttackStep>>>;
+  defenseOverrides?: Partial<DefenseRecommendation>;
+  fundFlowOverrides?: FundFlow[];
+}
+
+export interface TemplateInput {
+  patternId: string;
+  patternName: string;
+  severity: string;
+  title: string;
+  description: string;
+  attackVector: string;
+  recommendation: string;
+}
+
 export interface FeasibilityAssessment {
   technicalDifficulty: DifficultyLevel;
   technicalScore: number;
