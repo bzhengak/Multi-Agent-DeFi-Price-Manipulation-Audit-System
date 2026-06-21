@@ -6,6 +6,7 @@ import { AuditOrchestrator, type OrchestratorProgress } from '@/lib/agents/audit
 import { saveReport, addAnalysisRecord } from '@/lib/storage/data';
 import { saveJSON, loadJSON } from '@/lib/storage/blob';
 import { checkRateLimit, sanitizeAddress, validateSourceCode } from '@/lib/security';
+import { taskStates } from './state';
 
 const API_SUPPORTED_CHAINS = Object.keys(BLOCKCHAIN_CONFIG);
 
@@ -13,14 +14,17 @@ const API_SUPPORTED_CHAINS = Object.keys(BLOCKCHAIN_CONFIG);
 const TASKS_FILE = 'tasks.json';
 
 async function updateTaskStatus(taskId: string, status: Record<string, unknown>) {
+  taskStates.set(taskId, status);
   const tasks = (await loadJSON<Record<string, Record<string, unknown>>>(TASKS_FILE)) || {};
   tasks[taskId] = { ...tasks[taskId], ...status, updatedAt: new Date().toISOString() };
   await saveJSON(TASKS_FILE, tasks);
 }
 
 async function getTaskStatus(taskId: string): Promise<Record<string, unknown> | null> {
-  const tasks = (await loadJSON<Record<string, Record<string, unknown>>>(TASKS_FILE)) || {};
-  return tasks[taskId] || null;
+  const mem = taskStates.get(taskId) as unknown as Record<string, unknown>;
+  if (mem) return mem;
+  const tasks = await loadJSON<Record<string, Record<string, unknown>>>(TASKS_FILE);
+  return tasks?.[taskId] || null;
 }
 
 export async function POST(request: NextRequest) {
@@ -182,6 +186,57 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  const url = new URL(request.url);
+  const pathParts = url.pathname.split('/').filter(Boolean);
+
+  // SSE stream endpoint: GET /api/analyze/{taskId}/stream
+  if (pathParts.length >= 3 && pathParts[2] && pathParts[pathParts.length - 1] === 'stream') {
+    const taskId = pathParts[pathParts.length - 2];
+
+    if (!taskId) {
+      return new Response(JSON.stringify({ error: '缺少taskId' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    const currentState = taskStates.get(taskId) as unknown as Record<string, unknown>;
+    if (!currentState) {
+      return new Response(JSON.stringify({ error: '任务不存在' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(currentState)}\n\n`));
+
+        const unsubscribe = taskStates.subscribe(taskId, (state) => {
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(state)}\n\n`));
+            if (state.status === 'completed' || state.status === 'failed') {
+              controller.close();
+              unsubscribe();
+            }
+          } catch {
+            controller.close();
+            unsubscribe();
+          }
+        });
+
+        request.signal.addEventListener('abort', () => {
+          unsubscribe();
+        });
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
+    });
+  }
+
+  // Polling endpoint: GET /api/analyze?taskId=xxx
   try {
     const authenticated = await isAuthenticated();
     if (!authenticated) {
@@ -190,27 +245,18 @@ export async function GET(request: NextRequest) {
 
     const taskId = request.nextUrl.searchParams.get('taskId');
     if (!taskId) {
-      return NextResponse.json(
-        { error: '缺少taskId参数' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '缺少taskId参数' }, { status: 400 });
     }
 
     const task = await getTaskStatus(taskId);
     if (!task) {
-      return NextResponse.json(
-        { error: '任务不存在' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: '任务不存在' }, { status: 404 });
     }
 
     return NextResponse.json(task);
   } catch (error) {
     console.error('Analyze GET error:', error);
-    return NextResponse.json(
-      { error: '获取任务状态失败' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: '获取任务状态失败' }, { status: 500 });
   }
 }
 
@@ -228,6 +274,7 @@ async function runAnalysis(
     context_building: '上下文构建中 - 正在准备针对性分析策略',
     vulnerability_analysis: '漏洞分析中 - AI正在深度分析合约代码（多轮迭代）',
     attack_reconstruction: '攻击重建中 - 正在重建攻击场景与资金流向',
+    cost_estimation: '攻击成本估算中 - 正在计算确定性成本区间',
     confidence_calibration: '置信度校准中 - 正在评估分析结果可信度',
     report_generation: '报告生成中 - AI正在撰写增强版审计报告',
   };

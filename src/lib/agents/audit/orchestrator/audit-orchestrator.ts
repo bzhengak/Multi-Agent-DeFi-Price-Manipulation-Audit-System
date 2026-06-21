@@ -12,6 +12,10 @@ import { REPORT_SYSTEM_PROMPT } from '../../prompts/report';
 import { VULNERABILITY_SYSTEM_PROMPT } from '../../prompts/vulnerability';
 import { loadHistoryCases } from '@/lib/storage/data';
 import { computeBudget } from '@/lib/iteration/budget';
+import { estimateAttackCost } from '@/lib/cost/estimator';
+import { getCostRegistry } from '@/lib/cost/cost-registry';
+import type { AttackCostEstimate } from '@/lib/cost/types';
+import type { BlockchainId } from '@/lib/blockchain/config';
 
 export interface OrchestratorProgress {
   stage: string;
@@ -26,6 +30,7 @@ export type StageName =
   | 'context_building'
   | 'vulnerability_analysis'
   | 'attack_reconstruction'
+  | 'cost_estimation'
   | 'confidence_calibration'
   | 'report_generation';
 
@@ -34,6 +39,7 @@ const DEFAULT_STAGE_BUDGETS: Record<StageName, number> = {
   context_building: 10_000,
   vulnerability_analysis: 600_000,
   attack_reconstruction: 60_000,
+  cost_estimation: 15_000,
   confidence_calibration: 5_000,
   report_generation: 60_000,
 };
@@ -189,7 +195,29 @@ export class AuditOrchestrator {
     );
     this.emit({ stage: 'attack_reconstruction', progress: 70, details: `${reconstruction.summary.totalAttacks} attacks reconstructed, ${reconstruction.combinedAttackChains.length} combined chains` });
 
-    // Step 5: Confidence Calibration
+    // Step 5: Cost Estimation (deterministic attack cost)
+    this.emit({ stage: 'cost_estimation', progress: 72, details: 'Estimating attack costs...' });
+    const costRegistry = getCostRegistry();
+    const costEstimates: Record<string, AttackCostEstimate> = {};
+    for (const vuln of analysisResult.vulnerabilities) {
+      try {
+        const estimate = await this.runStage('cost_estimation', () =>
+          estimateAttackCost(
+            { patternId: vuln.patternId, attackVector: vuln.attackVector },
+            blockchain as BlockchainId,
+            costRegistry,
+          ),
+        );
+        costEstimates[vuln.id] = estimate;
+        (vuln as unknown as Record<string, unknown>).attackCostEstimate = estimate;
+      } catch {
+        // Cost estimation failure is non-fatal
+      }
+    }
+    const costCount = Object.keys(costEstimates).length;
+    this.emit({ stage: 'cost_estimation', progress: 75, details: `Costs estimated for ${costCount}/${analysisResult.vulnerabilities.length} vulnerabilities` });
+
+    // Step 6: Confidence Calibration
     this.emit({ stage: 'confidence_calibration', progress: 75, details: 'Calibrating confidence scores...' });
     const calibratedResult = await this.runStage('confidence_calibration', async () =>
       this.calibrator.calibrate(

@@ -12,7 +12,7 @@
 ```
 Week 1     ▣ M1-M3 (环境)   ▣ H1 (SQLite)   ▣ T1 (OTAU 真实接入)         ▣ T2, T3
 Week 2     ▣ T5 (结构化输出)   ▣ T4 (提前停止)   ▣ M7 (模式 ID 校准)        ▣ T6 (Prisma 迁移)
-Week 3     ▣ T9 [x] (per-vuln overlay)   ▣ T10 (确定性成本)   ▣ T14 (状态机收敛)
+Week 3     ▣ T9 [x] (per-vuln overlay)   ▣ T10 [x] (确定性成本)   ▣ T14 [x] (SSE 状态机)
 Week 4     ▣ T7 (Slither + TS AST 双层验证 · 3 天)
 Week 5     ▣ T12 (评估 harness + 跑一次)
 Week 6     ▣ T13 (文档定稿)  ◀  最低毕业线
@@ -1306,7 +1306,15 @@ src/
 │   │   │   └── orchestrator/audit-orchestrator.ts     [T3, T6, T7, T8, T10, T11] 改
 │   │   └── prompts/                  —  不改
 │   ├── blockchain/fetcher.ts         —  不改
-│   ├── cost/estimator.ts             [T10] 新增
+│   ├── cost/
+│   │   ├── types.ts                 [T10] 新增
+│   │   ├── chain-native-token.ts    [T10] 新增
+│   │   ├── cost-registry.ts         [T10] 新增
+│   │   ├── tools/
+│   │   │   ├── gas-price.tool.ts    [T10] 新增
+│   │   │   ├── native-price.tool.ts [T10] 新增
+│   │   │   └── flash-loan-fee.tool.ts [T10] 新增
+│   │   └── estimator.ts             [T10] 新增
 │   ├── iteration/budget.ts           [T11] 新增
 │   ├── storage/data.ts               [T6] 改读 Prisma
 │   └── symbolic/                     [T7] 整个新目录（22 个文件）
@@ -1355,8 +1363,9 @@ src/__tests__/symbolic/                [T7] 18 fixture + ~86 tests
 
 data/
 ├── vulnerabilities.json              [T6] 仍是 single source
-├── history.json                      [M7] 加 pattern_ids 字段
-└── pattern-weights.json              [M4] 新增
+├── history.json                     [M7] 加 pattern_ids 字段
+├── pattern-weights.json             [M4] 新增
+└── pattern-cost-profiles.json       [T10] 新增 per-pattern gas 区间
 
 package.json                          [T6, T12] 加 scripts
                                       [T7] @nomicfoundation/solidity-analyzer (devDep)

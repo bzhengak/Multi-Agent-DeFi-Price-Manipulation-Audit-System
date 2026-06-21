@@ -1,0 +1,37 @@
+{
+  "version": "1.0.0",
+  "generated": "2026-06-21",
+  "rubric": {
+    "gasLow": "Optimistic estimate (shortest path, no revert retries, minimal contract interaction)",
+    "gasHigh": "Conservative estimate (multi-hop, state updates, possible revert retries)",
+    "flashLoanNeeded": "Whether this pattern typically requires flash loan capital amplification"
+  },
+  "fallback": {
+    "gasLow": 500000,
+    "gasHigh": 1500000,
+    "flashLoanNeeded": true
+  },
+  "patterns": {
+    "OD-01": { "gasLow": 600000, "gasHigh": 1200000, "flashLoanNeeded": true, "rationale": "getReserves() manipulation: flash loan→single-pool large swap→read reserves→exploit→repay." },
+    "OD-02": { "gasLow": 800000, "gasHigh": 1800000, "flashLoanNeeded": true, "rationale": "TWAP window manipulation requires multiple blocks/txs to sustain feed distortion." },
+    "OD-03": { "gasLow": 80000, "gasHigh": 150000, "flashLoanNeeded": false, "rationale": "Centralized oracle compromise—just call setPrice." },
+    "OD-04": { "gasLow": 100000, "gasHigh": 200000, "flashLoanNeeded": false, "rationale": "Stale oracle exploitation—just call protocol function when oracle is stale." },
+    "OD-05": { "gasLow": 100000, "gasHigh": 200000, "flashLoanNeeded": false, "rationale": "Heartbeat failure exploitation—wait for oracle downtime then one tx." },
+    "LR-01": { "gasLow": 400000, "gasHigh": 900000, "flashLoanNeeded": true, "rationale": "Mint/burn at manipulated instant reserves—flash swap skews pool ratio." },
+    "LR-02": { "gasLow": 1000000, "gasHigh": 2500000, "flashLoanNeeded": true, "rationale": "Liquidation manipulation: longest single-attack chain (flash loan→distort→liquidate→profit→repay)." },
+    "LR-03": { "gasLow": 300000, "gasHigh": 600000, "flashLoanNeeded": true, "rationale": "TVL/volume inflation: flash deposit→claim reward→withdraw. Short flow." },
+    "TO-01": { "gasLow": 150000, "gasHigh": 300000, "flashLoanNeeded": false, "rationale": "Missing deadline MEV: hold victim tx in mempool, single tx when profitable." },
+    "TO-02": { "gasLow": 200000, "gasHigh": 450000, "flashLoanNeeded": false, "rationale": "Sandwich attack: front-run + back-run two txs. MEV bundle." },
+    "TO-03": { "gasLow": 500000, "gasHigh": 1200000, "flashLoanNeeded": true, "rationale": "Reentrancy price manipulation: re-enter during callback, drain via multiple iterations." },
+    "AC-01": { "gasLow": 60000, "gasHigh": 120000, "flashLoanNeeded": false, "rationale": "Oracle address takeover: one setter call. Lowest gas in library." },
+    "AC-02": { "gasLow": 60000, "gasHigh": 120000, "flashLoanNeeded": false, "rationale": "Economic parameter adjustment: one setter call." },
+    "AC-03": { "gasLow": 80000, "gasHigh": 150000, "flashLoanNeeded": false, "rationale": "Unlimited mint: one mint call then dump tokens on DEX." },
+    "CL-01": { "gasLow": 1000000, "gasHigh": 3000000, "flashLoanNeeded": false, "rationale": "Precision rounding: hundreds of repeated micro-tx to accumulate rounding gains." },
+    "CL-02": { "gasLow": 150000, "gasHigh": 300000, "flashLoanNeeded": false, "rationale": "Decimal mismatch: deposit incorrectly-scaled token in one or two txs." },
+    "CL-03": { "gasLow": 500000, "gasHigh": 1500000, "flashLoanNeeded": true, "rationale": "AMM curve parameter exploit: complex math, large swap, curve region push." },
+    "CR-01": { "gasLow": 500000, "gasHigh": 1200000, "flashLoanNeeded": true, "rationale": "Sole external price source: manipulate external DEX/oracle + exploit target protocol." },
+    "CR-02": { "gasLow": 400000, "gasHigh": 900000, "flashLoanNeeded": true, "rationale": "LP token collateral valuation: manipulate underlying pool + deposit LP tokens as collateral." },
+    "CR-03": { "gasLow": 80000, "gasHigh": 150000, "flashLoanNeeded": false, "rationale": "Unchecked cross-protocol call: call external contract without return check." },
+    "CR-04": { "gasLow": 1500000, "gasHigh": 3000000, "flashLoanNeeded": true, "rationale": "Cross-protocol cascading manipulation: deepest call graph (depth >= 2), multi-protocol, multi-hop." }
+  }
+}

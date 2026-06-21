@@ -281,7 +281,14 @@ src/lib/agents/
 src/lib/
 ├── llm.ts                         — [DONE] OpenAI-compatible (DeepSeek V4 Pro)
 ├── cost/
-│   └── estimator.ts              — [T10] Deterministic cost estimation
+│   ├── types.ts                     — [DONE] AttackCostEstimate interface
+│   ├── chain-native-token.ts        — [DONE] 7-chain native token mapping
+│   ├── cost-registry.ts             — [DONE] ToolRegistry with 3 cost tools
+│   ├── tools/
+│   │   ├── gas-price.tool.ts        — [DONE] Etherscan Gas Tracker Oracle
+│   │   ├── native-price.tool.ts     — [DONE] CoinGecko keyless API
+│   │   └── flash-loan-fee.tool.ts   — [DONE] Aave V3 0.05% + Balancer V2 0%
+│   └── estimator.ts                 — [DONE] Deterministic cost estimation
 ├── iteration/
 │   └── budget.ts                 — [T11] Adaptive iteration budget
 ├── symbolic/
@@ -294,8 +301,8 @@ src/lib/
 │   └── verifier-orchestrator.ts — [T7] Dual-layer verification entry point
 
 src/app/api/analyze/
-├── route.ts                       — [T14] SSE single state machine
-└── state.ts                       — [T14] In-memory task state
+├── route.ts                       — [DONE] SSE stream + polling dual-mode
+└── state.ts                       — [DONE] In-memory task state + EventEmitter + TTL
 
 eval/                              — [T12] Evaluation harness
 ├── dataset/
@@ -342,4 +349,4 @@ T14 (SSE state machine) ──────────────────�
 
 **Must-do**: T1, T2, T3, T5, T6, T7, T12-v1, T13 (~12–15 person-days, 3 weeks)
 
-**Stretch**: T8, T10, T11, T14 (10–16 person-days)
+**Stretch**: T8, T11 (8–13 person-days)

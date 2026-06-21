@@ -1621,16 +1621,32 @@ function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
       }
       const data = await apiCall('/api/analyze', { method: 'POST', body: formData });
       setTaskId(data.taskId);
-      const pollInterval = setInterval(async () => {
+      const sseUrl = `/api/analyze/${data.taskId}/stream`;
+      const es = new EventSource(sseUrl);
+      es.onmessage = (event) => {
         try {
-          const taskData = await apiCall(`/api/analyze?taskId=${data.taskId}`);
+          const taskData = JSON.parse(event.data);
           setProgress(taskData.progress || 0);
           setStage(taskData.stage || '');
           setTaskStatus(taskData.status);
-          if (taskData.status === 'completed') { clearInterval(pollInterval); setLoading(false); toast.success('分析完成！'); }
-          else if (taskData.status === 'failed') { clearInterval(pollInterval); setLoading(false); toast.error(taskData.error || '分析失败'); }
-        } catch { clearInterval(pollInterval); setLoading(false); toast.error('获取分析进度失败'); }
-      }, 2000);
+          if (taskData.status === 'completed') { es.close(); setLoading(false); toast.success('分析完成！'); }
+          else if (taskData.status === 'failed') { es.close(); setLoading(false); toast.error(taskData.error || '分析失败'); }
+        } catch { es.close(); setLoading(false); toast.error('分析进度解析失败'); }
+      };
+      es.onerror = () => {
+        es.close();
+        // Fallback to polling
+        const pollInterval = setInterval(async () => {
+          try {
+            const taskData = await apiCall(`/api/analyze?taskId=${data.taskId}`);
+            setProgress(taskData.progress || 0);
+            setStage(taskData.stage || '');
+            setTaskStatus(taskData.status);
+            if (taskData.status === 'completed') { clearInterval(pollInterval); setLoading(false); toast.success('分析完成！'); }
+            else if (taskData.status === 'failed') { clearInterval(pollInterval); setLoading(false); toast.error(taskData.error || '分析失败'); }
+          } catch { clearInterval(pollInterval); setLoading(false); toast.error('获取分析进度失败'); }
+        }, 3000);
+      };
     } catch (err: any) { toast.error(err.message || '分析请求失败'); setLoading(false); }
   };
 

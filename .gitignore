@@ -69,6 +69,8 @@ server.log
 .storage/
 db/
 *.sqlite
+*.db
+prisma/dev.db
 
 # ============================================
 # Upload & temp directories
