@@ -28,6 +28,7 @@ export type ProgressCallback = (progress: OrchestratorProgress) => void;
 export type StageName =
   | 'protocol_detection'
   | 'context_building'
+  | 'cross_contract_tracing'
   | 'vulnerability_analysis'
   | 'attack_reconstruction'
   | 'cost_estimation'
@@ -37,6 +38,7 @@ export type StageName =
 const DEFAULT_STAGE_BUDGETS: Record<StageName, number> = {
   protocol_detection: 5_000,
   context_building: 10_000,
+  cross_contract_tracing: 30_000,
   vulnerability_analysis: 600_000,
   attack_reconstruction: 60_000,
   cost_estimation: 15_000,
@@ -155,8 +157,8 @@ export class AuditOrchestrator {
     const classification = await this.runStage('protocol_detection', async () => this.detector.detect(sourceCode));
     this.emit({ stage: 'protocol_detection', progress: 10, details: `Detected: ${classification.type} (confidence: ${classification.confidence})` });
 
-    // Step 2: Context Build (parallel with detection in spec, but detection result feeds context)
-    this.emit({ stage: 'context_building', progress: 15, details: 'Building analysis context...' });
+    // Step 2: Context Build (includes cross-contract tracing in deep mode)
+    this.emit({ stage: 'context_building', progress: 15, details: 'Building analysis context with cross-contract tracing...' });
     const context = await this.runStage('context_building', () =>
       this.contextManager.build(
         sourceCode,
@@ -167,6 +169,7 @@ export class AuditOrchestrator {
         'deep',
       ),
     );
+    this.emit({ stage: 'context_building', progress: 18, details: `Context built. Cross-contract nodes: ${context.crossContractGraph?.nodeCount ?? 0}` });
 
     // Step 3: Vulnerability Analysis (multi-round iterative, adaptive budget)
     const topPatternId = classification.priorityVulnerabilities[0] ?? 'OD-01';

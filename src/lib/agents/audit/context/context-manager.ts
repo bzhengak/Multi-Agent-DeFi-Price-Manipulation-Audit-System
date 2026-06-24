@@ -1,5 +1,8 @@
 import type { ProtocolClassification } from '../protocols/types';
 import { loadHistoryCases, loadVulnerabilityPatterns } from '@/lib/storage/data';
+import { CrossContractTracer } from '../cross-contract/cross-contract-tracer';
+import type { CrossContractSummary } from '../cross-contract/types';
+import type { BlockchainId } from '@/lib/blockchain/config';
 
 export interface AnalysisContext {
   contractCode: string;
@@ -11,6 +14,7 @@ export interface AnalysisContext {
   relevantCases: RelevantCase[];
   focusAreas: string[];
   analysisDepth: 'standard' | 'deep';
+  crossContractGraph?: CrossContractSummary;
 }
 
 export interface RelevantPattern {
@@ -34,6 +38,8 @@ export interface RelevantCase {
 }
 
 export class ContextManager {
+  private crossContractTracer = new CrossContractTracer();
+
   async build(
     contractCode: string,
     contractName: string,
@@ -51,6 +57,20 @@ export class ContextManager {
     const relevantCases = this.filterRelevantCases(allCases.cases, classification, depth);
     const focusAreas = this.buildFocusAreas(classification);
 
+    let crossContractGraph: CrossContractSummary | undefined;
+    if (depth === 'deep' && address) {
+      try {
+        crossContractGraph = await this.crossContractTracer.trace(
+          contractCode,
+          contractName,
+          blockchain as BlockchainId,
+          address,
+        );
+      } catch {
+        // cross-contract tracing failure does not block the main pipeline
+      }
+    }
+
     return {
       contractCode,
       contractName,
@@ -61,6 +81,7 @@ export class ContextManager {
       relevantCases,
       focusAreas,
       analysisDepth: depth,
+      crossContractGraph,
     };
   }
 

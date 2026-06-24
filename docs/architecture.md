@@ -1,6 +1,6 @@
 # DeFi Price Manipulation Analyzer — System Architecture
 
-> 版本: v3.6.0 | 最后更新: 2026-06-11
+> 版本: v3.7.0 | 最后更新: 2026-06-24
 
 ---
 
@@ -36,6 +36,7 @@ flowchart TD
     subgraph Analysis["Analysis Pipeline"]
         DET[ProtocolTypeDetector]
         CTX[ContextManager]
+        CCT[CrossContractTracer — T8]
         PO[PromptOptimizer]
     end
 
@@ -49,6 +50,7 @@ flowchart TD
     ANALYZE --> ORCH
     ORCH --> DET
     ORCH --> CTX
+    CTX --> CCT
     ORCH --> VULN
     VULN --> RECON
     RECON --> CAL
@@ -67,31 +69,32 @@ flowchart TD
 
 ---
 
-## 2. Audit Pipeline — 6 Stages
+## 2. Audit Pipeline — 7 Stages
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        AuditOrchestrator.run()                          │
-│                                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
-│  │ Stage 1  │→│ Stage 2  │→│ Stage 3  │→│ Stage 4  │→│ Stage 5  │→│ Stage 6  │
-│  │ Protocol │  │ Context  │  │ Vuln     │  │ Attack   │  │ Confidence│  │ Report   │
-│  │ Detection│  │ Building │  │ Analysis │  │ Reconst. │  │ Calibration│ │ Generation│
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘
-│   ~5s           ~10s          ~600s          ~60s           ~5s           ~60s
-│                                                                         │
-│  Total timeout: 740s (per-stage budgets)                               │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                           AuditOrchestrator.run()                                 │
+│                                                                                  │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────┐│
+│  │Stage 1  │→│Stage 2  │→│Stage 3  │→│Stage 4  │→│Stage 5  │→│Stage 6  │→│S 7  ││
+│  │Protocol │ │Context  ││Vuln     ││Attack   ││Cost    ││Confid.  ││Report││
+│  │Detection│ │+CrossCon││Analysis ││Reconst. ││Estim.  ││Calibrat.││Gen.  ││
+│  └─────────┘ └─────────┘└─────────┘└─────────┘└─────────┘└─────────┘└─────┘│
+│   ~5s          ~10s+30s    ~600s       ~60s       ~15s       ~5s      ~60s   │
+│                                                                                  │
+│  Total timeout: ~785s (per-stage budgets with T3)                               │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Stage | Component | Timeout | Input | Output |
 |-------|-----------|---------|-------|--------|
 | 1 | `ProtocolTypeDetector` | 5s | source code | `ProtocolClassification` |
-| 2 | `ContextManager` | 10s | classification | `AnalysisContext` |
+| 2 | `ContextManager` + `CrossContractTracer` (T8) | 10s+30s | classification | `AnalysisContext` (+ `crossContractGraph`) |
 | 3 | `VulnerabilityAnalysisAgent` | 600s | context | `VulnerabilityAnalysisResult` |
 | 4 | `PriceManipulationReconstructor` | 60s | vulns + classification | `ReconstructionResult` |
-| 5 | `ConfidenceCalibrator` | 5s | vulns + reconstruction | `CalibratedResult` |
-| 6 | `ReportAgent` | 60s | calibrated result | `reportMarkdown` |
+| 5 | `AttackCostEstimator` (T10) | 15s | vulns + classification | `AttackCostEstimate` |
+| 6 | `ConfidenceCalibrator` | 5s | vulns + reconstruction | `CalibratedResult` |
+| 7 | `ReportAgent` | 60s | calibrated result | `reportMarkdown` |
 
 ---
 
@@ -269,9 +272,11 @@ src/lib/agents/
 │   ├── calibration/
 │   │   └── confidence-calibrator.ts — [DONE] 5-dim calibration
 │   ├── cross-contract/
-│   │   └── cross-contract-tracer.ts — [T8] Cross-contract taint analysis
+│   │   ├── types.ts               — [T8 DONE] CrossContractGraph, CrossContractNode, CrossContractEdge
+│   │   ├── known-protocols.ts     — [T8 DONE] 12 known protocol address mapping
+│   │   └── cross-contract-tracer.ts — [T8 DONE] @solidity-parser/parser call graph builder
 │   └── orchestrator/
-│       └── audit-orchestrator.ts  — [T3] Per-stage timeout needed
+│       └── audit-orchestrator.ts  — [T3+T8 DONE] Per-stage timeout + cross_contract_tracing stage
 ├── prompts/
 │   ├── vulnerability.ts           — [DONE] System prompts
 │   └── report.ts                  — [DONE] Report prompts
@@ -290,27 +295,25 @@ src/lib/
 │   │   └── flash-loan-fee.tool.ts   — [DONE] Aave V3 0.05% + Balancer V2 0%
 │   └── estimator.ts                 — [DONE] Deterministic cost estimation
 ├── iteration/
-│   └── budget.ts                 — [T11] Adaptive iteration budget
-├── symbolic/
-│   ├── slither-runner.ts        — [T7] Slither runner + JSON parser
-│   ├── detector-mapping.ts      — [T7] Slither detector → 21 pattern ID mapping
-│   ├── ts-verifiers/            — [T7] 9 TS AST verifiers (OD-01~05, LR-01, CR-01, CR-04, TO-01)
-│   │   ├── ast-utils.ts         — [T7] Shared AST utility functions
-│   │   ├── index.ts             — [T7] Verifier registry
-│   │   └── *.ts                 — [T7] Per-pattern verifiers
-│   └── verifier-orchestrator.ts — [T7] Dual-layer verification entry point
+│   └── budget.ts                 — [T11 DONE] Adaptive iteration budget (computeBudget)
+├── symbolic/                     — [T7 SKIPPED] Not implemented (see execution-plan §T7)
 
 src/app/api/analyze/
 ├── route.ts                       — [DONE] SSE stream + polling dual-mode
 └── state.ts                       — [DONE] In-memory task state + EventEmitter + TTL
 
-eval/                              — [T12] Evaluation harness
+eval/                              — [T12 DONE] Evaluation harness (33 pos + 15 neg + baselines)
+├── types.ts                        — [T12 DONE] EvalCase, EvalResult, MetricsResult
+├── stats.ts                        — [T12 DONE] Wilson CI, Bootstrap CI, Jaccard similarity
+├── metrics.ts                      — [T12 DONE] Hit Rate, Per-pattern Recall, FP Rate
+├── report.ts                       — [T12 DONE] Markdown report generator
+├── run-agent.ts                    — [T12 DONE] Run system on all cases
+├── run-baselines.ts                — [T12 DONE] Run Raw LLM + Slither baselines
+├── run-eval.ts                     — [T12 DONE] Main entry point
 ├── dataset/
-├── run-agent.ts
-├── run-baselines.ts
-├── metrics.ts
-├── pocs/run-forge.ts
-└── report.ts
+│   ├── positives.ts                — [T12 DONE] Load from history.json (33 cases)
+│   └── negatives.ts                — [T12 DONE] 15 safe contracts
+└── results/                        — [T12] Generated evaluation reports
 ```
 
 ---
@@ -326,27 +329,29 @@ eval/                              — [T12] Evaluation harness
 | Episodic memory in SQLite | Race-condition safe for concurrent audits |
 | Per-stage timeouts | Debuggable: which stage is slow? |
 | OD-01~05 + CR-01~05 | Complete 21-pattern coverage per vulnerabilities.json |
-| T7: Slither + TS AST (not Mythril) | 3 days vs 6–12 days; covers 16/21 patterns; full TS debug stack |
-| T12: v1 minimum viable eval | 1.5–2 days baseline; v2 adds Slither/PoC comparison |
+| T7 skipped | Slither+TS AST dual verification descoped; LLM-only reasoning with cross-contract graph |
+| T8: @solidity-parser/parser | Full AST + visit() walker; cross-contract call graph injection |
+| T12: Full eval harness | 33 positives + 15 negatives + Raw LLM/Slither baselines |
 
 ---
 
 ## 9. Task Dependency Graph
 
 ```
-H1 (SQLite) → T1 (OTAU) → T2 (PromptOptimizer) → T5 (Structured Output) → T7 (Slither + TS AST) → T12 (Eval) → T13 (Docs)
-                                                      ↑
-                                                      │
+H1 (SQLite) → T1 (OTAU) → T2 (PromptOptimizer) → T5 (Structured Output) → T8 (Cross-Contract) → T12 (Eval) → T13 (Docs)
+                                                       ↑
+                                                       │
 T3 (Timeouts) ────────────────────────────────────────┤ (parallel anytime)
 T4 (Convergence) ──────────────────────────────────────┤
-T6 (Prisma) → T8 (Cross-contract) → T11 (Adaptive)   │
+T6 (Prisma) ───────────────────────────────────────────┤
 T9 [DONE] (Per-vuln overlay) ──────────────────────────┤
-T10 (Cost estimation) ────────────────────────────────┘
-T14 (SSE state machine) ──────────────────────────────┘
+T10 (Cost estimation) ─────────────────────────────────┤
+T11 (Adaptive budget) ─────────────────────────────────┤
+T14 (SSE state machine) ───────────────────────────────┘
 ```
 
-**Critical path**: T1 → T2 → T5 → T7 → T12 → T13
+**Critical path**: T1 → T2 → T5 → T8 → T12 → T13 (T7 skipped)
 
-**Must-do**: T1, T2, T3, T5, T6, T7, T12-v1, T13 (~12–15 person-days, 3 weeks)
+**Must-do**: T1, T2, T3, T5, T6, T8, T12, T13 (~14–17 person-days, 3 weeks)
 
-**Stretch**: T8, T11 (8–13 person-days)
+**Skipped**: T7 (Slither + TS AST dual verification — descoped)

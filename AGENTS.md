@@ -63,12 +63,14 @@
 - [x] 实现 ConfidenceCalibrator 置信度校准机制
 - [x] 实现攻击可行性评估（技术/经济/MEV依赖度）
 - [x] 实现历史案例类比匹配
+- [x] 实现跨合约调用图构建器（T8）
 
 ### 阶段四：协调与集成（Phase 4 - Orchestration & Integration）
 - [x] 实现 AuditOrchestrator 多 Agent 协调调度器
 - [x] 实现现有 API 路由与新 Agent 系统的集成
 - [ ] 实现前端 UI 适配（分析进度、中间结果展示）
 - [x] 实现报告生成 Agent（利用攻击重建结果）
+- [x] 实现跨合约调用图构建器（T8, @solidity-parser/parser）
 - [ ] 端到端测试与性能基准
 
 ### 阶段五：优化与部署（Phase 5 - Optimization & Deployment）
@@ -88,17 +90,17 @@
 | **T4** | 置信度差值提前停止 | — | 0.5 | S | `[x]` |
 | **T5** | LLM 结构化输出（response_format: json_schema） | T1 | 1 | M | `[x]` |
 | **T6** | 模式搬进 Prisma + CLI ingest 脚本 | — | 2 | M | `[x]` |
-| **T7** | Slither + TS AST 双层验证（16/21 pattern） | T1, T5 | 3 | M | `[ ]` |
-| **T8** | 跨合约污点子 Agent | T1, T6 | 5–8 | L | `[ ]` |
+| **T7** | Slither + TS AST 双层验证（已舍弃） | T1, T5 | 3 | M | `[-]` |
+| **T8** | 跨合约调用图构建器（@solidity-parser/parser） | T1, T6 | 2 | M | `[x]` |
 | **T9** | 攻击重建改为 per-vulnerability 覆盖模板（Data-Driven Overlay + LLM Hybrid） | — | 1 | M | `[x]` |
 | **T10** | 确定性攻击成本估算（3 Tool + pattern-cost-profiles + estimator） | — | 1–2 | S | `[x]` |
 | **T11** | 自适应迭代预算 | T1, T7, T8 | 3–5 | M | `[x]` |
-| **T12** | 评估 harness（v1: 1.5–2天 / v2 加分: 2–3天） | T7 | 1.5–3 | M | `[ ]` |
+| **T12** | 评估 harness（33 正样本 + 15 负样本 + Slither/Raw LLM 基线） | T7 | 2 | M | `[x]` |
 | **T13** | 文档定稿（OD-05 进表、协议映射） | T6 | 1–2 | S | `[x]` |
 | **T14** | `/api/analyze` SSE 单一状态机 | — | 1 | S | `[x]` |
 
-> 关键路径: T1 → T2 → T7 → T12 → T13（最低毕业线）
-> 最低毕业线: T1, T2, T3, T5, T6, T7, T12-v1, T13 = ~12–15 人天（3 周）
+> 关键路径: T1 → T2 → T8 → T12 → T13（T7 已舍弃，改为 T8 跨合约分析）
+> 最低毕业线: T1, T2, T3, T5, T6, T8, T12, T13 = ~14–17 人天（3 周）
 > 总人天: 26–36（约 5–7 周）
 > v1.2 变更: T7 改为 Slither + TS AST 双层验证（3天），Mythril 完整版移到附录 C
 

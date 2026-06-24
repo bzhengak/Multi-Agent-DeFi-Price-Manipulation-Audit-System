@@ -3,6 +3,8 @@ import type { ToolContext } from '@/lib/agents/core/tools/types';
 import type { BlockchainId } from '@/lib/blockchain/config';
 import type { AttackCostEstimate } from './types';
 import { CHAIN_NATIVE_TOKEN } from './chain-native-token';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 interface VulnCostInput {
   patternId: string;
@@ -42,7 +44,9 @@ export async function estimateAttackCost(
   let gasProfile: GasProfile;
   let gasProfileSource: AttackCostEstimate['dataSource']['gasProfile'];
   try {
-    const data: CostProfileData = require('@/../../data/pattern-cost-profiles.json');
+    const data = JSON.parse(
+      readFileSync(join(process.cwd(), 'data', 'pattern-cost-profiles.json'), 'utf-8')
+    ) as CostProfileData;
     gasProfile = data.patterns[vuln.patternId] || data.fallback;
     gasProfileSource = data.patterns[vuln.patternId] ? 'pattern-cost-profiles' : 'fallback';
   } catch {
