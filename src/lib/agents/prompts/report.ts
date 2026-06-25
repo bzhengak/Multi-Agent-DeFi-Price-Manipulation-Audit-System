@@ -51,21 +51,29 @@ export const REPORT_SYSTEM_PROMPT = `你是一位专业的区块链安全审计�
   - 相似度评估（高/中/低）
   - 关键相似点和差异点
 - **修复建议**：
-  - **推荐方案**：具体的代码修改方案，包含修复前后的代码对比
-  - **替代方案**：其他可行的修复方式
-  - **验证方法**：修复后如何验证漏洞已被消除
-- **攻击成本估算 (attack_cost_estimate)**：
-  - 所需闪电贷规模 (ETH/USD)
-  - 估算Gas成本 (ETH)
-  - 声明此估算为LLM基于典型DeFi攻击规模的近似值
-- **修复时效 (remediation_timeline)**：
-  - Critical → 建议24小时内修复
-  - High → 建议7天内修复
-  - Medium/Low → 建议纳入常规Sprint周期
-- **合规溯源 (knowledge_references)**：
-  - SWC ID（如 SWC-123）
-  - OWASP 类别（如 SC03:2026）
-  - 从漏洞模式的 references 字段获取
+  - 使用攻击重建阶段（attack_reconstruction）提供的 defenses 数据：immediate（即时修复）→ 短期修复（shortTerm）→ 长期改进（longTerm）
+  - 无需自行生成修复方案，直接引用 reconstruction 结果中的 defenses.immediate / shortTerm / longTerm
+  - 如有需要补充，可基于漏洞模式补充代码级恢复示例
+- **攻击成本估算**：
+  - 使用系统自动计算的 attackCostEstimate 结构化数据（由 T10 成本估算引擎提供）：
+    - 区间范围：attackCostEstimate.low - attackCostEstimate.high USD
+    - 典型值：attackCostEstimate.mid USD
+    - Gas成本：attackCostEstimate.breakdown.gasCostUSD.mid USD
+    - 闪电贷费用：attackCostEstimate.breakdown.flashLoanCostUSD USD (来源: attackCostEstimate.breakdown.flashLoanProvider)
+    - 数据来源：attackCostEstimate.dataSource.gas / attackCostEstimate.dataSource.nativePrice
+    - 数据截至：attackCostEstimate.asOf（ISO时间戳）
+    - 假设声明：attackCostEstimate.assumptions 逐条列出
+  - 此为确定性估算（非 LLM 猜测），由实时 gas/price API + per-pattern gas profile 计算得出
+- **修复时效**：
+  - 由系统按严重等级自动生成，无需手动估算：
+    - Critical → 建议 24 小时内修复
+    - High → 建议 7 天内修复
+    - Medium / Low → 建议纳入常规 Sprint 周期修复
+- **合规溯源**：
+  - 由系统从漏洞模式定义自动填充：
+    - SWC ID：从漏洞模式库的 references 字段获取
+    - OWASP 类别：从 SC03:2026（价格预言机操纵）等相关类别获取
+  - 报告中注明"来源：漏洞模式库（vulnerability_pattern references）"
 
 ### 4. Risk Matrix（风险矩阵）
 

@@ -1555,7 +1555,7 @@ function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState('');
   const [taskStatus, setTaskStatus] = useState<string>('');
-  const [analysisDepth, setAnalysisDepth] = useState<'quick' | 'standard' | 'deep'>('standard');
+  const [analysisDepth, setAnalysisDepth] = useState<'deep'>('deep');
   const [showPreview, setShowPreview] = useState(false);
 
   const chains = [
@@ -1573,6 +1573,7 @@ function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
     { label: '构建', icon: <Database className="w-4 h-4" /> },
     { label: '分析', icon: <Shield className="w-4 h-4" /> },
     { label: '重建', icon: <AlertTriangle className="w-4 h-4" /> },
+    { label: '成本', icon: <BarChart3 className="w-4 h-4" /> },
     { label: '校准', icon: <Activity className="w-4 h-4" /> },
     { label: '报告', icon: <FileText className="w-4 h-4" /> },
   ];
@@ -1584,10 +1585,12 @@ function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
     if (lower.includes('上下文') || lower.includes('context')) return 1;
     if (lower.includes('漏洞分析') || lower.includes('vulnerability') || lower.includes('analyz')) return 2;
     if (lower.includes('攻击重建') || lower.includes('reconstruct') || lower.includes('attack')) return 3;
-    if (lower.includes('置信度') || lower.includes('calibrat') || lower.includes('confidence')) return 4;
-    if (lower.includes('报告') || lower.includes('report')) return 5;
-    if (progress > 90) return 5;
-    if (progress > 75) return 4;
+    if (lower.includes('成本') || lower.includes('cost')) return 4;
+    if (lower.includes('置信度') || lower.includes('calibrat') || lower.includes('confidence')) return 5;
+    if (lower.includes('报告') || lower.includes('report')) return 6;
+    if (progress > 90) return 6;
+    if (progress > 75) return 5;
+    if (progress > 70) return 4;
     if (progress > 55) return 3;
     if (progress > 20) return 2;
     if (progress > 10) return 1;
@@ -1789,11 +1792,9 @@ function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
             {/* Analysis Depth */}
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">分析深度</label>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 {([
-                  { id: 'quick' as const, label: '快速', time: '~30s', desc: '基础扫描' },
-                  { id: 'standard' as const, label: '标准', time: '~2min', desc: '深度分析' },
-                  { id: 'deep' as const, label: '深度', time: '~5min', desc: '全面审计' },
+                  { id: 'deep' as const, label: '深度审计', time: '~3-5min', desc: '7阶段完整审计管道 — 协议识别 → 上下文构建 → 漏洞分析 → 攻击重建 → 成本估算 → 置信度校准 → 报告生成' },
                 ]).map((d) => (
                   <button
                     key={d.id}

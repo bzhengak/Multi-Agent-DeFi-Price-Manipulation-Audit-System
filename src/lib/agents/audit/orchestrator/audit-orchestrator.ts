@@ -460,6 +460,17 @@ Please output the complete analysis results in the specified JSON format. Set co
       dimensions: cv.dimensions.map((d) => `${d.name}: ${(d.score * 100).toFixed(0)}%`),
     }));
 
+    // Deterministic per-vulnerability metadata (not LLM-generated)
+    const vulnMeta = analysisResult.vulnerabilities.map((v) => ({
+      id: v.id,
+      patternId: v.patternId,
+      costEstimate: (v as unknown as Record<string, unknown>).attackCostEstimate || null,
+      remediationTimeline: v.severity === 'Critical' ? '建议 24 小时内修复'
+        : v.severity === 'High' ? '建议 7 天内修复'
+        : '建议纳入常规 Sprint 周期修复',
+      knowledgeReferences: v.knowledge_references || null,
+    }));
+
     const userPrompt = `Please generate a comprehensive audit report based on the following enhanced analysis results.
 
 ## Contract Information
@@ -473,7 +484,7 @@ Please output the complete analysis results in the specified JSON format. Set co
 ${JSON.stringify(analysisResult, null, 2)}
 \`\`\`
 
-## Attack Reconstruction
+## Attack Reconstruction (T9 — Deterministic)
 \`\`\`json
 ${JSON.stringify(reconstructionSummary, null, 2)}
 \`\`\`
@@ -497,7 +508,14 @@ ${JSON.stringify(calibrationSummary, null, 2)}
 ## Historical Case Details
 ${caseDetails.length > 0 ? JSON.stringify(caseDetails, null, 2) : 'No matched historical cases.'}
 
-Please generate a professional audit report. Include attack reconstruction details and confidence levels. Output in Markdown format.`;
+## Per-Vulnerability Metadata (Deterministic — use as-is, do not re-generate)
+\`\`\`json
+${JSON.stringify(vulnMeta, null, 2)}
+\`\`\`
+
+IMPORTANT: The per-vulnerability metadata above contains deterministic values (cost estimate, remediation timeline, knowledge references) calculated by the system, NOT by LLM. Use these values directly in the report. Do not re-estimate or re-generate them.
+
+Please generate a professional audit report. Include attack reconstruction details, confidence levels, and the provided deterministic metadata. Output in Markdown format.`;
 
     return this.llm.chat(REPORT_SYSTEM_PROMPT, userPrompt);
   }

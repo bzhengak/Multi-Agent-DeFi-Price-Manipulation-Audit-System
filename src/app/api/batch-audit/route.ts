@@ -6,6 +6,7 @@ import { AuditOrchestrator, type OrchestratorProgress } from '@/lib/agents/audit
 import { saveReport, addAnalysisRecord, loadHistoryCases } from '@/lib/storage/data';
 import { saveJSON, loadJSON } from '@/lib/storage/blob';
 import { sanitizeAddress } from '@/lib/security';
+import { QuotaExceededError } from '@/lib/llm';
 
 const API_SUPPORTED_CHAINS = Object.keys(BLOCKCHAIN_CONFIG);
 const BATCH_TASKS_FILE = 'batch_tasks.json';
@@ -282,6 +283,42 @@ async function runBatchAudit(taskId: string, caseIds?: string[]) {
       completedCases++;
     } catch (error) {
       console.error(`[Batch Audit] Failed to analyze case ${caseId}:`, error);
+
+      // Quota/rate-limit: stop immediately, save completed cases
+      if (error instanceof QuotaExceededError) {
+        console.error(`[Batch Audit] LLM quota exceeded at case ${i + 1}/${totalCases}. Stopping batch.`);
+        console.error(`[Batch Audit] Completed: ${completedCases}, Remaining: ${totalCases - i}`);
+
+        failedCases++;
+        results.push({
+          caseId,
+          reportId: '',
+          sourceOrigin: 'unavailable',
+          sourceType: 'unavailable',
+          riskLevel: 'N/A',
+          vulnerabilityCount: 0,
+          classification: 'unknown',
+          confidence: 0,
+          attackChains: 0,
+          error: `LLM 配额耗尽: ${error.message}`,
+        });
+
+        // Save partial results before stopping
+        await updateBatchTask(taskId, {
+          status: 'stopped',
+          stoppedAt: i + 1,
+          stoppedReason: 'LLM 配额耗尽 — 已完成结果已保存',
+          progress: Math.round(((i + 1) / totalCases) * 100),
+          completedCases,
+          failedCases: failedCases + (totalCases - i - 1),
+          remainingCases: totalCases - i - 1,
+          results,
+        });
+
+        console.log(`[Batch Audit] Stopped. ${completedCases} succeeded, ${failedCases} failed, ${totalCases - i - 1} remaining. Results saved.`);
+        return;
+      }
+
       failedCases++;
 
       const failedReportId = `report_failed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;

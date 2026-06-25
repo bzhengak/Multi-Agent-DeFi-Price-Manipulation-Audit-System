@@ -11,7 +11,9 @@
     "regenerate:patterns": "tsx scripts/regenerate-patterns-json.ts",
     "eval": "tsx eval/run-eval.ts",
     "eval:agent": "tsx eval/run-agent.ts",
-    "eval:baselines": "tsx eval/run-baselines.ts"
+    "eval:baselines": "tsx eval/run-baselines.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",
@@ -88,6 +90,7 @@
     "tailwindcss": "^4",
     "tsx": "^4.19.0",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.9"
   }
 }

@@ -48,6 +48,26 @@ function getClient(): OpenAI {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+export class QuotaExceededError extends Error {
+  constructor(message: string, public readonly statusCode?: number) {
+    super(message);
+    this.name = 'QuotaExceededError';
+  }
+}
+
+function isQuotaError(error: unknown): boolean {
+  const err = error as Record<string, unknown>;
+  const status = err.status as number | undefined;
+  const message = (err.message as string)?.toLowerCase() || '';
+  // HTTP 402 Payment Required, 429 Too Many Requests
+  if (status === 402 || status === 429) return true;
+  // DeepSeek/OpenAI quota-specific messages
+  if (message.includes('quota') || message.includes('insufficient')) return true;
+  if (message.includes('billing') || message.includes('payment')) return true;
+  if (message.includes('exceeded') && (message.includes('rate') || message.includes('limit'))) return true;
+  return false;
+}
+
 /**
  * Basic chat completion.
  */
@@ -59,22 +79,32 @@ export async function chatCompletion(
   const config = { ...LLM_CONFIG, ...options };
   const openai = getClient();
 
-  const completion = await openai.chat.completions.create({
-    model: config.model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    temperature: config.temperature,
-    max_tokens: config.maxTokens,
-    top_p: config.topP,
-  });
+  try {
+    const completion = await openai.chat.completions.create({
+      model: config.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: config.temperature,
+      max_tokens: config.maxTokens,
+      top_p: config.topP,
+    });
 
-  const content = completion.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('LLM returned empty response');
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('LLM returned empty response');
+    }
+    return content;
+  } catch (error: unknown) {
+    if (isQuotaError(error)) {
+      throw new QuotaExceededError(
+        `LLM quota exceeded: ${(error as Error).message}`,
+        (error as Record<string, unknown>).status as number | undefined,
+      );
+    }
+    throw error;
   }
-  return content;
 }
 
 /**
@@ -91,6 +121,10 @@ export async function chatWithRetry(
     try {
       return await chatCompletion(systemPrompt, userPrompt);
     } catch (error: unknown) {
+      // Quota/rate-limit errors: do NOT retry, fail immediately
+      if (error instanceof QuotaExceededError) {
+        throw error;
+      }
       lastError = error instanceof Error ? error : new Error('Unknown error');
       console.warn(`[LLM] Attempt ${attempt}/${maxRetries} failed:`, lastError.message);
 
