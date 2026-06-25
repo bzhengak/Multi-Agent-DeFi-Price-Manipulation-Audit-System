@@ -207,14 +207,6 @@ function extractJsonBlock(text: string): string | null {
   return null;
 }
 
-/**
- * Check which LLM mode is currently active.
- * Kept for backward compatibility; always returns 'openai' now.
- */
-export function getLLMMode(): 'zai' | 'openai' {
-  return 'openai';
-}
-
 // ─── Structured Output (T5) ──────────────────────────────────────────────────
 
 export type StructuredOutputMode = 'tool' | 'json_schema' | 'markdown';

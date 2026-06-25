@@ -1,4 +1,4 @@
-import { chatCompletion, chatWithRetry, getJSONResponse, getStructuredJSONResponse, getStructuredOutputMode, getLLMMode } from '@/lib/llm';
+import { chatCompletion, chatWithRetry, getJSONResponse, getStructuredJSONResponse, getStructuredOutputMode } from '@/lib/llm';
 
 export interface LLMCallOptions {
   model?: string;
@@ -63,9 +63,5 @@ export class LLMClient {
 
   getStructuredMode(): 'tool' | 'json_schema' | 'markdown' {
     return getStructuredOutputMode();
-  }
-
-  getMode(): 'zai' | 'openai' {
-    return getLLMMode();
   }
 }

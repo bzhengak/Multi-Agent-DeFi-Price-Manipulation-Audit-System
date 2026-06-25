@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isAuthenticated } from '@/lib/auth/jwt';
 import { loadSettings, saveSettings, maskSecret } from '@/lib/storage/settings';
 import { verifyPassword, hashPassword } from '@/lib/auth/jwt';
-import { getLLMMode } from '@/lib/llm';
 
 export async function GET() {
   try {
@@ -24,10 +23,9 @@ export async function GET() {
       bscscanApiKey: maskSecret(settings.bscscanApiKey || process.env.BSCSCAN_API_KEY),
       arbiscanApiKey: maskSecret(settings.arbiscanApiKey || process.env.ARBISCAN_API_KEY),
       basescanApiKey: maskSecret(settings.basescanApiKey || process.env.BASESCAN_API_KEY),
-      llmModel: settings.llmModel || process.env.LLM_MODEL || 'qwen3.5-plus',
+      llmModel: settings.llmModel || process.env.LLM_MODEL || 'deepseek-chat',
       hasPassword: !!(settings.passwordHash || process.env.USER_PASSWORD_HASH),
       apiVersion: 'v2',
-      llmMode: getLLMMode(),
       // Indicate which keys are configured (without revealing values)
       apiKeysStatus: {
         unified: !!unifiedApiKey,
