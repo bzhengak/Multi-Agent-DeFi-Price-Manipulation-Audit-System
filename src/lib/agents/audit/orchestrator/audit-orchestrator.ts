@@ -10,6 +10,7 @@ import { ConfidenceCalibrator } from '../calibration/confidence-calibrator';
 import { LLMClient } from '../../core/llm-client';
 import { REPORT_SYSTEM_PROMPT } from '../../prompts/report';
 import { VULNERABILITY_SYSTEM_PROMPT } from '../../prompts/vulnerability';
+import { QuotaExceededError } from '@/lib/llm';
 import { loadHistoryCases } from '@/lib/storage/data';
 import { computeBudget } from '@/lib/iteration/budget';
 import { estimateAttackCost } from '@/lib/cost/estimator';
@@ -74,12 +75,25 @@ export interface AuditResult {
   };
 }
 
+export interface PartialAuditResult {
+  partial: true;
+  completedStages: StageName[];
+  failedStage: StageName;
+  error: string;
+  classification?: ProtocolClassification;
+  analysisResult?: VulnerabilityAnalysisResult;
+  reconstruction?: ReconstructionResult;
+  calibratedResult?: CalibratedResult;
+  reportMarkdown?: string;
+}
+
 export class AuditOrchestrator {
   private detector: ProtocolTypeDetector;
   private contextManager: ContextManager;
   private reconstructor: PriceManipulationReconstructor;
   private calibrator: ConfidenceCalibrator;
   private llm: LLMClient;
+  private fastLlm: LLMClient;
   private onProgress?: ProgressCallback;
   private readonly totalTimeout: number;
   private readonly stageBudgets: Record<StageName, number>;
@@ -94,6 +108,7 @@ export class AuditOrchestrator {
     this.reconstructor = new PriceManipulationReconstructor();
     this.calibrator = new ConfidenceCalibrator();
     this.llm = new LLMClient({ maxRetries: 3, temperature: 0.1, maxTokens: 8192 });
+    this.fastLlm = new LLMClient({ provider: 'fast', maxRetries: 2, temperature: 0.1, maxTokens: 8192 });
     this.onProgress = onProgress;
     this.totalTimeout = totalTimeout;
     this.stageBudgets = { ...DEFAULT_STAGE_BUDGETS, ...stageBudgets };
@@ -112,7 +127,7 @@ export class AuditOrchestrator {
     contractName: string,
     blockchain: string,
     address?: string,
-  ): Promise<AuditResult> {
+  ): Promise<AuditResult | PartialAuditResult> {
     const startTime = Date.now();
 
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -131,7 +146,7 @@ export class AuditOrchestrator {
     vulnerabilityPattern: string,
     blockchain: string,
     contractAddress: string,
-  ): Promise<AuditResult> {
+  ): Promise<AuditResult | PartialAuditResult> {
     const startTime = Date.now();
 
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -150,126 +165,134 @@ export class AuditOrchestrator {
     blockchain: string,
     address: string | undefined,
     startTime: number,
-  ): Promise<AuditResult> {
+  ): Promise<AuditResult | PartialAuditResult> {
+    const completedStages: StageName[] = [];
+    let classification: ProtocolClassification | undefined;
+    let analysisResult: VulnerabilityAnalysisResult | undefined;
+    let reconstruction: ReconstructionResult | undefined;
+    let calibratedResult: CalibratedResult | undefined;
+    let reportMarkdown: string | undefined;
 
-    // Step 1: Protocol Detection (parallel-ready with context build)
-    this.emit({ stage: 'protocol_detection', progress: 5, details: 'Identifying protocol type...' });
-    const classification = await this.runStage('protocol_detection', async () => this.detector.detect(sourceCode));
-    this.emit({ stage: 'protocol_detection', progress: 10, details: `Detected: ${classification.type} (confidence: ${classification.confidence})` });
-
-    // Step 2: Context Build (includes cross-contract tracing in deep mode)
-    this.emit({ stage: 'context_building', progress: 15, details: 'Building analysis context with cross-contract tracing...' });
-    const context = await this.runStage('context_building', () =>
-      this.contextManager.build(
-        sourceCode,
-        contractName,
-        blockchain,
-        classification,
-        address,
-        'deep',
-      ),
-    );
-    this.emit({ stage: 'context_building', progress: 18, details: `Context built. Cross-contract nodes: ${context.crossContractGraph?.nodeCount ?? 0}` });
-
-    // Step 3: Vulnerability Analysis (multi-round iterative, adaptive budget)
-    const topPatternId = classification.priorityVulnerabilities[0] ?? 'OD-01';
-    const budget = computeBudget(classification, topPatternId, null);
-    this.emit({ stage: 'vulnerability_analysis', progress: 20, details: `Running multi-round vulnerability analysis (budget: ${budget.maxIterations} iterations, confidence threshold: ${budget.confidenceThreshold})...` });
-    const vulnAgent = new VulnerabilityAnalysisAgent(
-      sourceCode,
-      contractName,
-      blockchain,
-      address,
-      budget.maxIterations,
-    );
-
-    const agentResult = await this.runStage('vulnerability_analysis', () => vulnAgent.run());
-    const analysisResult = (agentResult.data as { analysisResult: VulnerabilityAnalysisResult }).analysisResult;
-    const iterationCount = (agentResult.data as { iterationCount: number }).iterationCount;
-    this.emit({ stage: 'vulnerability_analysis', progress: 50, details: `Found ${analysisResult.vulnerabilities.length} vulnerabilities in ${iterationCount} iterations` });
-
-    // Step 4: Attack Reconstruction
-    this.emit({ stage: 'attack_reconstruction', progress: 55, details: 'Reconstructing attack scenarios...' });
-    const reconstruction = await this.runStage('attack_reconstruction', () =>
-      this.reconstructor.reconstruct(
-        analysisResult.vulnerabilities,
-        classification,
-      ),
-    );
-    this.emit({ stage: 'attack_reconstruction', progress: 70, details: `${reconstruction.summary.totalAttacks} attacks reconstructed, ${reconstruction.combinedAttackChains.length} combined chains` });
-
-    // Step 5: Cost Estimation (deterministic attack cost)
-    this.emit({ stage: 'cost_estimation', progress: 72, details: 'Estimating attack costs...' });
-    const costRegistry = getCostRegistry();
-    const costEstimates: Record<string, AttackCostEstimate> = {};
-    for (const vuln of analysisResult.vulnerabilities) {
-      try {
-        const estimate = await this.runStage('cost_estimation', () =>
-          estimateAttackCost(
-            { patternId: vuln.patternId, attackVector: vuln.attackVector },
-            blockchain as BlockchainId,
-            costRegistry,
-          ),
-        );
-        costEstimates[vuln.id] = estimate;
-        (vuln as unknown as Record<string, unknown>).attackCostEstimate = estimate;
-      } catch {
-        // Cost estimation failure is non-fatal
+    // Step 1: Protocol Detection
+    try {
+      this.emit({ stage: 'protocol_detection', progress: 5, details: 'Identifying protocol type...' });
+      classification = await this.runStage('protocol_detection', async () => this.detector.detect(sourceCode));
+      completedStages.push('protocol_detection');
+      this.emit({ stage: 'protocol_detection', progress: 10, details: `Detected: ${classification!.type} (confidence: ${classification!.confidence})` });
+    } catch (error) {
+      if (error instanceof QuotaExceededError) {
+        return this.buildPartialResult(completedStages, 'protocol_detection', error.message, classification, analysisResult, reconstruction, calibratedResult, reportMarkdown);
       }
+      throw error;
     }
-    const costCount = Object.keys(costEstimates).length;
-    this.emit({ stage: 'cost_estimation', progress: 75, details: `Costs estimated for ${costCount}/${analysisResult.vulnerabilities.length} vulnerabilities` });
 
-    // Step 6: Confidence Calibration
-    this.emit({ stage: 'confidence_calibration', progress: 75, details: 'Calibrating confidence scores...' });
-    const calibratedResult = await this.runStage('confidence_calibration', async () =>
-      this.calibrator.calibrate(
-        analysisResult.vulnerabilities,
-        reconstruction,
-        classification,
-        iterationCount,
-        true,
-      ),
-    );
-    this.emit({ stage: 'confidence_calibration', progress: 80, details: `Overall confidence: ${calibratedResult.overallConfidence}` });
+    // Step 2: Context Build
+    try {
+      this.emit({ stage: 'context_building', progress: 15, details: 'Building analysis context with cross-contract tracing...' });
+      const context = await this.runStage('context_building', () =>
+        this.contextManager.build(sourceCode, contractName, blockchain, classification!, address, 'deep'),
+      );
+      completedStages.push('context_building');
+      this.emit({ stage: 'context_building', progress: 18, details: `Context built. Cross-contract nodes: ${context.crossContractGraph?.nodeCount ?? 0}` });
 
-    // Step 6: Report Generation
-    this.emit({ stage: 'report_generation', progress: 85, details: 'Generating audit report...' });
-    const reportMarkdown = await this.runStage('report_generation', () =>
-      this.generateEnhancedReport(
-        analysisResult,
-        reconstruction,
-        calibratedResult,
-        classification,
-        contractName,
-        blockchain,
-        address,
-      ),
-    );
-    this.emit({ stage: 'report_generation', progress: 95, details: 'Report generated' });
+      // Step 3: Vulnerability Analysis
+      const topPatternId = classification!.priorityVulnerabilities[0] ?? 'OD-01';
+      const budget = computeBudget(classification!, topPatternId, null);
+      this.emit({ stage: 'vulnerability_analysis', progress: 20, details: `Running multi-round vulnerability analysis (budget: ${budget.maxIterations} iterations, confidence threshold: ${budget.confidenceThreshold})...` });
+      const vulnAgent = new VulnerabilityAnalysisAgent(sourceCode, contractName, blockchain, address, budget.maxIterations);
+      const agentResult = await this.runStage('vulnerability_analysis', () => vulnAgent.run());
+      analysisResult = (agentResult.data as { analysisResult: VulnerabilityAnalysisResult }).analysisResult;
+      const iterationCount = (agentResult.data as { iterationCount: number }).iterationCount;
+      completedStages.push('vulnerability_analysis');
+      this.emit({ stage: 'vulnerability_analysis', progress: 50, details: `Found ${analysisResult.vulnerabilities.length} vulnerabilities in ${iterationCount} iterations` });
+
+      // Step 4: Attack Reconstruction
+      this.emit({ stage: 'attack_reconstruction', progress: 55, details: 'Reconstructing attack scenarios...' });
+      reconstruction = await this.runStage('attack_reconstruction', () =>
+        this.reconstructor.reconstruct(analysisResult!.vulnerabilities, classification!),
+      );
+      completedStages.push('attack_reconstruction');
+      this.emit({ stage: 'attack_reconstruction', progress: 70, details: `${reconstruction!.summary.totalAttacks} attacks reconstructed, ${reconstruction!.combinedAttackChains.length} combined chains` });
+
+      // Step 5: Cost Estimation
+      this.emit({ stage: 'cost_estimation', progress: 72, details: 'Estimating attack costs...' });
+      const costRegistry = getCostRegistry();
+      const costEstimates: Record<string, AttackCostEstimate> = {};
+      for (const vuln of analysisResult!.vulnerabilities) {
+        try {
+          const estimate = await this.runStage('cost_estimation', () =>
+            estimateAttackCost({ patternId: vuln.patternId, attackVector: vuln.attackVector }, blockchain as BlockchainId, costRegistry),
+          );
+          costEstimates[vuln.id] = estimate;
+          (vuln as unknown as Record<string, unknown>).attackCostEstimate = estimate;
+        } catch {
+          // Cost estimation failure is non-fatal
+        }
+      }
+      completedStages.push('cost_estimation');
+      const costCount = Object.keys(costEstimates).length;
+      this.emit({ stage: 'cost_estimation', progress: 75, details: `Costs estimated for ${costCount}/${analysisResult!.vulnerabilities.length} vulnerabilities` });
+
+      // Step 6: Confidence Calibration
+      this.emit({ stage: 'confidence_calibration', progress: 75, details: 'Calibrating confidence scores...' });
+      calibratedResult = await this.runStage('confidence_calibration', async () =>
+        this.calibrator.calibrate(analysisResult!.vulnerabilities, reconstruction!, classification!, iterationCount, true),
+      );
+      completedStages.push('confidence_calibration');
+      this.emit({ stage: 'confidence_calibration', progress: 80, details: `Overall confidence: ${calibratedResult!.overallConfidence}` });
+
+      // Step 7: Report Generation (uses fast provider)
+      this.emit({ stage: 'report_generation', progress: 85, details: 'Generating audit report...' });
+      reportMarkdown = await this.runStage('report_generation', () =>
+        this.generateEnhancedReport(analysisResult!, reconstruction!, calibratedResult!, classification!, contractName, blockchain, address),
+      );
+      completedStages.push('report_generation');
+      this.emit({ stage: 'report_generation', progress: 95, details: 'Report generated' });
+    } catch (error) {
+      if (error instanceof QuotaExceededError) {
+        const failedStage = this.detectFailedStage(completedStages);
+        return this.buildPartialResult(completedStages, failedStage, error.message, classification, analysisResult, reconstruction, calibratedResult, reportMarkdown);
+      }
+      throw error;
+    }
 
     // Compile summary
-    const vulns = analysisResult.vulnerabilities;
+    const vulns = analysisResult!.vulnerabilities;
     const summary = {
-      overallRisk: analysisResult.summary.riskLevel,
+      overallRisk: analysisResult!.summary.riskLevel,
       totalIssues: vulns.length,
       critical: vulns.filter((v) => v.severity === 'Critical').length,
       high: vulns.filter((v) => v.severity === 'High').length,
       medium: vulns.filter((v) => v.severity === 'Medium').length,
       low: vulns.filter((v) => v.severity === 'Low' || v.severity === 'Informational').length,
-      overallConfidence: calibratedResult.overallConfidence,
-      highFeasibilityAttacks: reconstruction.summary.highFeasibility,
-      combinedAttackChains: reconstruction.combinedAttackChains.length,
+      overallConfidence: calibratedResult!.overallConfidence,
+      highFeasibilityAttacks: reconstruction!.summary.highFeasibility,
+      combinedAttackChains: reconstruction!.combinedAttackChains.length,
     };
 
     this.emit({ stage: 'completed', progress: 100, details: `Audit complete in ${Date.now() - startTime}ms` });
 
+    // Layer 2: Auto-ingest audit result into history.json
+    if (analysisResult!.vulnerabilities.length > 0) {
+      try {
+        const { ingestAuditResult } = await import('@/lib/learning/case-ingester');
+        await ingestAuditResult({
+          contractName, blockchain, address,
+          caseNote: `Auto-audited contract: ${contractName} on ${blockchain}`,
+          analysisResult: analysisResult!, classification: classification!,
+          source: 'auto-audit',
+        });
+      } catch {
+        // Ingestion failure is non-fatal
+      }
+    }
+
     return {
-      analysisResult,
-      classification,
-      reconstruction,
-      calibratedResult,
-      reportMarkdown,
+      analysisResult: analysisResult!,
+      classification: classification!,
+      reconstruction: reconstruction!,
+      calibratedResult: calibratedResult!,
+      reportMarkdown: reportMarkdown!,
       summary,
     };
   }
@@ -281,28 +304,41 @@ export class AuditOrchestrator {
     blockchain: string,
     contractAddress: string,
     startTime: number,
-  ): Promise<AuditResult> {
+  ): Promise<AuditResult | PartialAuditResult> {
+    const completedStages: StageName[] = [];
+    let classification: ProtocolClassification | undefined;
+    let analysisResult: VulnerabilityAnalysisResult | undefined;
+    let reconstruction: ReconstructionResult | undefined;
+    let calibratedResult: CalibratedResult | undefined;
+    let reportMarkdown: string | undefined;
+
     const placeholderCode = `// Source code unavailable for case ${caseId}\n// Attack description: ${caseNote}\n// Vulnerability pattern: ${vulnerabilityPattern}`;
 
-    this.emit({ stage: 'protocol_detection', progress: 5, details: 'Inferring protocol type from case metadata...' });
-    const classification = await this.runStage('protocol_detection', async () => this.detector.detect(placeholderCode));
-    this.emit({ stage: 'protocol_detection', progress: 10, details: `Inferred: ${classification.type} (confidence: ${classification.confidence})` });
+    // Step 1: Protocol Detection
+    try {
+      this.emit({ stage: 'protocol_detection', progress: 5, details: 'Inferring protocol type from case metadata...' });
+      classification = await this.runStage('protocol_detection', async () => this.detector.detect(placeholderCode));
+      completedStages.push('protocol_detection');
+      this.emit({ stage: 'protocol_detection', progress: 10, details: `Inferred: ${classification!.type} (confidence: ${classification!.confidence})` });
+    } catch (error) {
+      if (error instanceof QuotaExceededError) {
+        return this.buildPartialResult(completedStages, 'protocol_detection', error.message, classification, analysisResult, reconstruction, calibratedResult, reportMarkdown);
+      }
+      throw error;
+    }
 
-    this.emit({ stage: 'context_building', progress: 15, details: 'Building context from case metadata...' });
-    const context = await this.runStage('context_building', () =>
-      this.contextManager.build(
-        placeholderCode,
-        caseId,
-        blockchain,
-        classification,
-        contractAddress,
-        'standard',
-      ),
-    );
+    // Step 2: Context Build
+    try {
+      this.emit({ stage: 'context_building', progress: 15, details: 'Building context from case metadata...' });
+      const context = await this.runStage('context_building', () =>
+        this.contextManager.build(placeholderCode, caseId, blockchain, classification!, contractAddress, 'standard'),
+      );
+      completedStages.push('context_building');
 
-    this.emit({ stage: 'vulnerability_analysis', progress: 20, details: 'Running context-based vulnerability analysis...' });
+      // Step 3: Vulnerability Analysis
+      this.emit({ stage: 'vulnerability_analysis', progress: 20, details: 'Running context-based vulnerability analysis...' });
 
-    const contextPrompt = `You are performing a context-based security audit because the contract source code is NOT available (all 3 source fetching methods failed: Etherscan V2, Sourcify, Heimdall decompilation). You must infer vulnerabilities based solely on the attack case metadata.
+      const contextPrompt = `You are performing a context-based security audit because the contract source code is NOT available (all 3 source fetching methods failed: Etherscan V2, Sourcify, Heimdall decompilation). You must infer vulnerabilities based solely on the attack case metadata.
 
 ## Case Information
 - Case ID: ${caseId}
@@ -315,9 +351,9 @@ export class AuditOrchestrator {
 The contract source code could not be obtained through any method (Etherscan V2, Sourcify, Heimdall decompilation all failed). Your analysis must be based on the attack case metadata above.
 
 ## Protocol Classification (Inferred)
-- Detected Type: ${classification.type}
-- Confidence: ${classification.confidence}
-- Priority Vulnerability Patterns: ${classification.priorityVulnerabilities.join(', ')}
+- Detected Type: ${classification!.type}
+- Confidence: ${classification!.confidence}
+- Priority Vulnerability Patterns: ${classification!.priorityVulnerabilities.join(', ')}
 
 ## Instructions
 Based on the attack description and vulnerability pattern, infer:
@@ -334,85 +370,93 @@ Since source code is unavailable, your analysis should:
 
 ## Historical Case Database Reference
 ${JSON.stringify(
-      context.relevantCases.map((c) => ({
-        id: c.id,
-        platform: c.platform,
-        pattern: c.vulnerabilityPattern,
-        description: c.description,
-      })),
-      null,
-      2,
-    )}
+        context.relevantCases.map((c) => ({
+          id: c.id,
+          platform: c.platform,
+          pattern: c.vulnerabilityPattern,
+          description: c.description,
+        })),
+        null,
+        2,
+      )}
 
 ## Vulnerability Pattern Database
 ${JSON.stringify(context.relevantPatterns, null, 2)}
 
 Please output the complete analysis results in the specified JSON format. Set codeQuality.overallScore to "F" since source code is unavailable.`;
 
-    const analysisResult = await this.runStage('vulnerability_analysis', () =>
-      this.llm.getJSON<VulnerabilityAnalysisResult>(
-        VULNERABILITY_SYSTEM_PROMPT,
-        contextPrompt,
-      ),
-    );
-    this.emit({ stage: 'vulnerability_analysis', progress: 50, details: `Inferred ${analysisResult.vulnerabilities.length} vulnerabilities from context` });
+      analysisResult = await this.runStage('vulnerability_analysis', () =>
+        this.llm.getJSON<VulnerabilityAnalysisResult>(VULNERABILITY_SYSTEM_PROMPT, contextPrompt),
+      );
+      completedStages.push('vulnerability_analysis');
+      this.emit({ stage: 'vulnerability_analysis', progress: 50, details: `Inferred ${analysisResult!.vulnerabilities.length} vulnerabilities from context` });
 
-    this.emit({ stage: 'attack_reconstruction', progress: 55, details: 'Reconstructing attack scenarios...' });
-    const reconstruction = await this.runStage('attack_reconstruction', () =>
-      this.reconstructor.reconstruct(
-        analysisResult.vulnerabilities,
-        classification,
-      ),
-    );
-    this.emit({ stage: 'attack_reconstruction', progress: 70, details: `${reconstruction.summary.totalAttacks} attacks reconstructed` });
+      // Step 4: Attack Reconstruction
+      this.emit({ stage: 'attack_reconstruction', progress: 55, details: 'Reconstructing attack scenarios...' });
+      reconstruction = await this.runStage('attack_reconstruction', () =>
+        this.reconstructor.reconstruct(analysisResult!.vulnerabilities, classification!),
+      );
+      completedStages.push('attack_reconstruction');
+      this.emit({ stage: 'attack_reconstruction', progress: 70, details: `${reconstruction!.summary.totalAttacks} attacks reconstructed` });
 
-    this.emit({ stage: 'confidence_calibration', progress: 75, details: 'Calibrating confidence scores...' });
-    const calibratedResult = await this.runStage('confidence_calibration', async () =>
-      this.calibrator.calibrate(
-        analysisResult.vulnerabilities,
-        reconstruction,
-        classification,
-        1,
-        false,
-      ),
-    );
-    this.emit({ stage: 'confidence_calibration', progress: 80, details: `Overall confidence: ${calibratedResult.overallConfidence}` });
+      // Step 5: Confidence Calibration
+      this.emit({ stage: 'confidence_calibration', progress: 75, details: 'Calibrating confidence scores...' });
+      calibratedResult = await this.runStage('confidence_calibration', async () =>
+        this.calibrator.calibrate(analysisResult!.vulnerabilities, reconstruction!, classification!, 1, false),
+      );
+      completedStages.push('confidence_calibration');
+      this.emit({ stage: 'confidence_calibration', progress: 80, details: `Overall confidence: ${calibratedResult!.overallConfidence}` });
 
-    this.emit({ stage: 'report_generation', progress: 85, details: 'Generating audit report...' });
-    const reportMarkdown = await this.runStage('report_generation', () =>
-      this.generateEnhancedReport(
-        analysisResult,
-        reconstruction,
-        calibratedResult,
-        classification,
-        caseId,
-        blockchain,
-        contractAddress,
-      ),
-    );
-    this.emit({ stage: 'report_generation', progress: 95, details: 'Report generated' });
+      // Step 6: Report Generation (uses fast provider)
+      this.emit({ stage: 'report_generation', progress: 85, details: 'Generating audit report...' });
+      reportMarkdown = await this.runStage('report_generation', () =>
+        this.generateEnhancedReport(analysisResult!, reconstruction!, calibratedResult!, classification!, caseId, blockchain, contractAddress),
+      );
+      completedStages.push('report_generation');
+      this.emit({ stage: 'report_generation', progress: 95, details: 'Report generated' });
+    } catch (error) {
+      if (error instanceof QuotaExceededError) {
+        const failedStage = this.detectFailedStage(completedStages);
+        return this.buildPartialResult(completedStages, failedStage, error.message, classification, analysisResult, reconstruction, calibratedResult, reportMarkdown);
+      }
+      throw error;
+    }
 
-    const vulns = analysisResult.vulnerabilities;
+    const vulns = analysisResult!.vulnerabilities;
     const summary = {
-      overallRisk: analysisResult.summary.riskLevel,
+      overallRisk: analysisResult!.summary.riskLevel,
       totalIssues: vulns.length,
       critical: vulns.filter((v) => v.severity === 'Critical').length,
       high: vulns.filter((v) => v.severity === 'High').length,
       medium: vulns.filter((v) => v.severity === 'Medium').length,
       low: vulns.filter((v) => v.severity === 'Low' || v.severity === 'Informational').length,
-      overallConfidence: calibratedResult.overallConfidence,
-      highFeasibilityAttacks: reconstruction.summary.highFeasibility,
-      combinedAttackChains: reconstruction.combinedAttackChains.length,
+      overallConfidence: calibratedResult!.overallConfidence,
+      highFeasibilityAttacks: reconstruction!.summary.highFeasibility,
+      combinedAttackChains: reconstruction!.combinedAttackChains.length,
     };
 
     this.emit({ stage: 'completed', progress: 100, details: `Context-based audit complete in ${Date.now() - startTime}ms` });
 
+    // Layer 2: Auto-ingest audit result into history.json
+    if (analysisResult!.vulnerabilities.length > 0) {
+      try {
+        const { ingestAuditResult } = await import('@/lib/learning/case-ingester');
+        await ingestAuditResult({
+          contractName: caseId, blockchain, address: contractAddress,
+          caseNote, analysisResult: analysisResult!, classification: classification!,
+          source: 'auto-audit',
+        });
+      } catch {
+        // Ingestion failure is non-fatal
+      }
+    }
+
     return {
-      analysisResult,
-      classification,
-      reconstruction,
-      calibratedResult,
-      reportMarkdown,
+      analysisResult: analysisResult!,
+      classification: classification!,
+      reconstruction: reconstruction!,
+      calibratedResult: calibratedResult!,
+      reportMarkdown: reportMarkdown!,
       summary,
     };
   }
@@ -517,7 +561,41 @@ IMPORTANT: The per-vulnerability metadata above contains deterministic values (c
 
 Please generate a professional audit report. Include attack reconstruction details, confidence levels, and the provided deterministic metadata. Output in Markdown format.`;
 
-    return this.llm.chat(REPORT_SYSTEM_PROMPT, userPrompt);
+    return this.fastLlm.chat(REPORT_SYSTEM_PROMPT, userPrompt);
+  }
+
+  private detectFailedStage(completedStages: StageName[]): StageName {
+    const allStages: StageName[] = [
+      'protocol_detection', 'context_building', 'vulnerability_analysis',
+      'attack_reconstruction', 'cost_estimation', 'confidence_calibration', 'report_generation',
+    ];
+    for (const stage of allStages) {
+      if (!completedStages.includes(stage)) return stage;
+    }
+    return 'report_generation';
+  }
+
+  private buildPartialResult(
+    completedStages: StageName[],
+    failedStage: StageName,
+    errorMessage: string,
+    classification?: ProtocolClassification,
+    analysisResult?: VulnerabilityAnalysisResult,
+    reconstruction?: ReconstructionResult,
+    calibratedResult?: CalibratedResult,
+    reportMarkdown?: string,
+  ): PartialAuditResult {
+    return {
+      partial: true,
+      completedStages,
+      failedStage,
+      error: `LLM quota exceeded at stage "${failedStage}": ${errorMessage}`,
+      classification,
+      analysisResult,
+      reconstruction,
+      calibratedResult,
+      reportMarkdown,
+    };
   }
 
   private emit(progress: OrchestratorProgress): void {

@@ -12,6 +12,7 @@
     "eval": "tsx eval/run-eval.ts",
     "eval:agent": "tsx eval/run-agent.ts",
     "eval:baselines": "tsx eval/run-baselines.ts",
+    "eval:poc": "tsx eval/run-poc-eval.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

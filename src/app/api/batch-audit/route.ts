@@ -231,6 +231,39 @@ async function runBatchAudit(taskId: string, caseIds?: string[]) {
         );
       }
 
+      // Handle partial result (quota exceeded) — treat as failure, save partial
+      if ('partial' in auditResult && auditResult.partial) {
+        const partial = auditResult as import('@/lib/agents/audit/orchestrator/audit-orchestrator').PartialAuditResult;
+        failedCases++;
+        results.push({
+          caseId,
+          reportId: '',
+          sourceOrigin: 'unavailable',
+          sourceType: 'unavailable',
+          riskLevel: partial.analysisResult?.summary?.riskLevel || 'N/A',
+          vulnerabilityCount: partial.analysisResult?.vulnerabilities?.length || 0,
+          classification: partial.classification?.type || 'unknown',
+          confidence: partial.calibratedResult?.overallConfidence || 0,
+          attackChains: partial.reconstruction?.combinedAttackChains?.length || 0,
+          error: `LLM quota exhausted at ${partial.failedStage}: ${partial.error}`,
+        });
+        // Stop batch on quota exhaustion
+        await updateBatchTask(taskId, {
+          status: 'stopped',
+          stoppedAt: i + 1,
+          stoppedReason: 'LLM 配额耗尽 — 已完成结果已保存',
+          progress: Math.round(((completedCases + 1) / totalCases) * 100),
+          completedCases,
+          failedCases: failedCases + (totalCases - i - 1),
+          remainingCases: totalCases - i - 1,
+          results,
+        });
+        return;
+      }
+
+      // Full audit result
+      const fullResult = auditResult as import('@/lib/agents/audit/orchestrator/audit-orchestrator').AuditResult;
+
       const reportId = `report_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
       const fullReport = {
@@ -243,12 +276,12 @@ async function runBatchAudit(taskId: string, caseIds?: string[]) {
           sourceOrigin,
           sourceType,
         },
-        analysisResult: auditResult.analysisResult,
-        reportMarkdown: auditResult.reportMarkdown,
-        summary: auditResult.summary,
-        classification: auditResult.classification,
-        reconstruction: auditResult.reconstruction,
-        calibratedResult: auditResult.calibratedResult,
+        analysisResult: fullResult.analysisResult,
+        reportMarkdown: fullResult.reportMarkdown,
+        summary: fullResult.summary,
+        classification: fullResult.classification,
+        reconstruction: fullResult.reconstruction,
+        calibratedResult: fullResult.calibratedResult,
         caseId,
       };
 
@@ -260,8 +293,8 @@ async function runBatchAudit(taskId: string, caseIds?: string[]) {
         blockchain: caseItem.blockchain_platform,
         address: contractAddress,
         analysisTime: new Date().toISOString(),
-        riskLevel: auditResult.summary.overallRisk,
-        vulnerabilityCount: auditResult.summary.totalIssues,
+        riskLevel: fullResult.summary.overallRisk,
+        vulnerabilityCount: fullResult.summary.totalIssues,
         reportUrl: reportId,
         sourceOrigin,
         sourceType,
@@ -273,11 +306,11 @@ async function runBatchAudit(taskId: string, caseIds?: string[]) {
         reportId,
         sourceOrigin,
         sourceType,
-        riskLevel: auditResult.summary.overallRisk,
-        vulnerabilityCount: auditResult.summary.totalIssues,
-        classification: auditResult.classification.type,
-        confidence: auditResult.calibratedResult.overallConfidence,
-        attackChains: auditResult.reconstruction.combinedAttackChains.length,
+        riskLevel: fullResult.summary.overallRisk,
+        vulnerabilityCount: fullResult.summary.totalIssues,
+        classification: fullResult.classification.type,
+        confidence: fullResult.calibratedResult.overallConfidence,
+        attackChains: fullResult.reconstruction.combinedAttackChains.length,
       });
 
       completedCases++;

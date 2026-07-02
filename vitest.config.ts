@@ -11,7 +11,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/__tests__/**/*.test.ts'],
+    include: ['src/__tests__/**/*.test.ts', 'src/lib/learning/__tests__/**/*.test.ts'],
     exclude: ['node_modules', '.next', '.storage'],
     testTimeout: 15000,
   },

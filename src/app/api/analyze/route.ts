@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isAuthenticated } from '@/lib/auth/jwt';
 import { fetchContractSource, type SourceOrigin, type SourceType } from '@/lib/blockchain/fetcher';
 import { BLOCKCHAIN_CONFIG, type BlockchainId } from '@/lib/blockchain/config';
-import { AuditOrchestrator, type OrchestratorProgress } from '@/lib/agents/audit/orchestrator/audit-orchestrator';
+import { AuditOrchestrator, type AuditResult, type OrchestratorProgress, type PartialAuditResult } from '@/lib/agents/audit/orchestrator/audit-orchestrator';
 import { saveReport, addAnalysisRecord } from '@/lib/storage/data';
 import { saveJSON, loadJSON } from '@/lib/storage/blob';
 import { checkRateLimit, sanitizeAddress, validateSourceCode } from '@/lib/security';
+import { QuotaExceededError } from '@/lib/llm';
 import { taskStates } from './state';
 
 const API_SUPPORTED_CHAINS = Object.keys(BLOCKCHAIN_CONFIG);
@@ -166,12 +167,21 @@ export async function POST(request: NextRequest) {
     runAnalysis(taskId, sourceCode, chain, contractName, contractAddress, sourceOrigin, sourceType).catch(
       async (error) => {
         console.error('Analysis failed:', error);
-        await updateTaskStatus(taskId, {
-          status: 'failed',
-          progress: 0,
-          stage: '分析失败',
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
+        if (error instanceof QuotaExceededError) {
+          await updateTaskStatus(taskId, {
+            status: 'partial',
+            progress: 0,
+            stage: '分析因配额限制部分完成',
+            error: `LLM 配额耗尽: ${error.message}`,
+          });
+        } else {
+          await updateTaskStatus(taskId, {
+            status: 'failed',
+            progress: 0,
+            stage: '分析失败',
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        }
       }
     );
 
@@ -292,6 +302,61 @@ async function runAnalysis(
   const orchestrator = new AuditOrchestrator(onProgress);
   const auditResult = await orchestrator.run(sourceCode, contractName, chain, contractAddress);
 
+  // Check if the result is partial (quota exceeded during analysis)
+  if ('partial' in auditResult && auditResult.partial) {
+    const partial = auditResult as PartialAuditResult;
+    const partialReportId = `report_partial_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    const partialReport = {
+      id: partialReportId,
+      createdAt: new Date().toISOString(),
+      partial: true,
+      completedStages: partial.completedStages,
+      failedStage: partial.failedStage,
+      error: partial.error,
+      contractInfo: {
+        address: contractAddress,
+        chain,
+        name: contractName,
+        sourceOrigin,
+        sourceType,
+      },
+      analysisResult: partial.analysisResult || [],
+      reportMarkdown: partial.reportMarkdown || `# Partial Audit Report\n\nAnalysis stopped due to LLM quota limit.\n\n**Completed stages**: ${partial.completedStages.join(', ')}\n**Failed at**: ${partial.failedStage}\n**Error**: ${partial.error}`,
+      classification: partial.classification || null,
+      reconstruction: partial.reconstruction || null,
+      calibratedResult: partial.calibratedResult || null,
+    };
+
+    await saveReport(partialReportId, partialReport);
+    await addAnalysisRecord({
+      id: partialReportId,
+      contractName,
+      blockchain: chain,
+      address: contractAddress,
+      analysisTime: new Date().toISOString(),
+      riskLevel: partial.analysisResult?.summary?.riskLevel || 'N/A',
+      vulnerabilityCount: partial.analysisResult?.vulnerabilities?.length || 0,
+      reportUrl: partialReportId,
+      sourceOrigin,
+      sourceType,
+    });
+
+    await updateTaskStatus(taskId, {
+      status: 'partial',
+      progress: 100,
+      stage: '分析部分完成',
+      reportId: partialReportId,
+      error: partial.error,
+      completedStages: partial.completedStages,
+      failedStage: partial.failedStage,
+    });
+    return;
+  }
+
+  // At this point, auditResult is a full AuditResult (not partial)
+  const fullResult = auditResult as AuditResult;
+
   const reportId = `report_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   const fullReport = {
@@ -304,12 +369,12 @@ async function runAnalysis(
       sourceOrigin,
       sourceType,
     },
-    analysisResult: auditResult.analysisResult,
-    reportMarkdown: auditResult.reportMarkdown,
-    summary: auditResult.summary,
-    classification: auditResult.classification,
-    reconstruction: auditResult.reconstruction,
-    calibratedResult: auditResult.calibratedResult,
+    analysisResult: fullResult.analysisResult,
+    reportMarkdown: fullResult.reportMarkdown,
+    summary: fullResult.summary,
+    classification: fullResult.classification,
+    reconstruction: fullResult.reconstruction,
+    calibratedResult: fullResult.calibratedResult,
   };
 
   await saveReport(reportId, fullReport);
@@ -320,8 +385,8 @@ async function runAnalysis(
     blockchain: chain,
     address: contractAddress,
     analysisTime: new Date().toISOString(),
-    riskLevel: auditResult.summary.overallRisk,
-    vulnerabilityCount: auditResult.summary.totalIssues,
+    riskLevel: fullResult.summary.overallRisk,
+    vulnerabilityCount: fullResult.summary.totalIssues,
     reportUrl: reportId,
     sourceOrigin,
     sourceType,
@@ -332,8 +397,8 @@ async function runAnalysis(
     progress: 100,
     stage: '分析完成',
     reportId,
-    classification: auditResult.classification.type,
-    confidence: auditResult.calibratedResult.overallConfidence,
-    attackChains: auditResult.reconstruction.combinedAttackChains.length,
+    classification: fullResult.classification.type,
+    confidence: fullResult.calibratedResult.overallConfidence,
+    attackChains: fullResult.reconstruction.combinedAttackChains.length,
   });
 }

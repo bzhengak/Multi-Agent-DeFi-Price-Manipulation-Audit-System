@@ -1,4 +1,4 @@
-import { chatCompletion, chatWithRetry, getJSONResponse, getStructuredJSONResponse, getStructuredOutputMode } from '@/lib/llm';
+import { chatCompletion, chatWithRetry, getJSONResponse, getStructuredJSONResponse, getStructuredOutputMode, type LLMProvider } from '@/lib/llm';
 
 export interface LLMCallOptions {
   model?: string;
@@ -6,10 +6,12 @@ export interface LLMCallOptions {
   maxTokens?: number;
   topP?: number;
   maxRetries?: number;
+  provider?: LLMProvider;
 }
 
 export class LLMClient {
   private defaultOptions: LLMCallOptions;
+  private provider: LLMProvider;
 
   constructor(options: LLMCallOptions = {}) {
     this.defaultOptions = {
@@ -19,10 +21,12 @@ export class LLMClient {
       maxRetries: 3,
       ...options,
     };
+    this.provider = options.provider ?? 'primary';
   }
 
   async chat(systemPrompt: string, userPrompt: string, options: LLMCallOptions = {}): Promise<string> {
     const merged = { ...this.defaultOptions, ...options };
+    const provider = merged.provider ?? this.provider;
     const llmOptions: Record<string, unknown> = {};
     if (merged.model) llmOptions.model = merged.model;
     if (merged.temperature !== undefined) llmOptions.temperature = merged.temperature;
@@ -31,13 +35,15 @@ export class LLMClient {
 
     const retries = merged.maxRetries ?? 3;
     if (retries > 1) {
-      return chatWithRetry(systemPrompt, userPrompt, retries);
+      return chatWithRetry(systemPrompt, userPrompt, retries, provider);
     }
-    return chatCompletion(systemPrompt, userPrompt, llmOptions);
+    return chatCompletion(systemPrompt, userPrompt, llmOptions, provider);
   }
 
-  async getJSON<T>(systemPrompt: string, userPrompt: string): Promise<T> {
-    return getJSONResponse<T>(systemPrompt, userPrompt);
+  async getJSON<T>(systemPrompt: string, userPrompt: string, options: LLMCallOptions = {}): Promise<T> {
+    const merged = { ...this.defaultOptions, ...options };
+    const provider = merged.provider ?? this.provider;
+    return getJSONResponse<T>(systemPrompt, userPrompt, provider);
   }
 
   /**
@@ -52,16 +58,21 @@ export class LLMClient {
     options: LLMCallOptions = {},
   ): Promise<T> {
     const merged = { ...this.defaultOptions, ...options };
+    const provider = merged.provider ?? this.provider;
     const llmOptions: Record<string, unknown> = {};
     if (merged.model) llmOptions.model = merged.model;
     if (merged.temperature !== undefined) llmOptions.temperature = merged.temperature;
     if (merged.maxTokens !== undefined) llmOptions.maxTokens = merged.maxTokens;
     if (merged.topP !== undefined) llmOptions.topP = merged.topP;
 
-    return getStructuredJSONResponse<T>(systemPrompt, userPrompt, jsonSchema, llmOptions);
+    return getStructuredJSONResponse<T>(systemPrompt, userPrompt, jsonSchema, llmOptions, provider);
   }
 
   getStructuredMode(): 'tool' | 'json_schema' | 'markdown' {
     return getStructuredOutputMode();
+  }
+
+  getProvider(): LLMProvider {
+    return this.provider;
   }
 }

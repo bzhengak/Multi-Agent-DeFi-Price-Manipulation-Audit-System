@@ -54,8 +54,46 @@ export class ContextManager {
     ]);
 
     const relevantPatterns = this.filterRelevantPatterns(allPatterns.patterns, classification);
-    const relevantCases = this.filterRelevantCases(allCases.cases, classification, depth);
+    let relevantCases = this.filterRelevantCases(allCases.cases, classification, depth);
     const focusAreas = this.buildFocusAreas(classification);
+
+    // Layer 3: RAG retrieval via semantic search to supplement keyword-based filtering
+    try {
+      const { MemorySystem } = await import('@/lib/agents/core/memory/memory');
+      const memory = new MemorySystem();
+      await memory.init();
+
+      const query = `${classification.type} ${classification.priorityVulnerabilities.join(' ')} ${blockchain} ${contractName}`;
+      const semanticResults = await memory.searchSemantic(query, 5);
+
+      if (semanticResults.length > 0) {
+        const existingIds = new Set(relevantCases.map(c => c.id));
+        for (const result of semanticResults) {
+          const caseIdMatch = result.content.match(/CASE-\d{3}/);
+          if (caseIdMatch && !existingIds.has(caseIdMatch[0])) {
+            const originalCase = allCases.cases.find(c => c.id === caseIdMatch[0]);
+            if (originalCase) {
+              relevantCases.push({
+                id: originalCase.id,
+                time: originalCase.time,
+                platform: originalCase.blockchain_platform,
+                vulnerabilityPattern: originalCase.vulnerability_pattern ?? '',
+                description: originalCase.note?.substring(0, 200) ?? '',
+                relevance: 0.5,
+              });
+              existingIds.add(caseIdMatch[0]);
+            }
+          }
+        }
+        relevantCases = relevantCases
+          .sort((a, b) => b.relevance - a.relevance)
+          .slice(0, depth === 'deep' ? 20 : 10);
+      }
+
+      await memory.close();
+    } catch {
+      // Semantic search failure is non-fatal, fall back to keyword-only results
+    }
 
     let crossContractGraph: CrossContractSummary | undefined;
     if (depth === 'deep' && address) {

@@ -1,13 +1,20 @@
 // ============================================
-// LLM Module — OpenAI-compatible API (DeepSeek V4 Pro)
+// LLM Module — OpenAI-compatible API (Dual Provider)
 // ============================================
 // Uses OpenAI SDK to connect to any OpenAI-compatible endpoint.
-// Default: DeepSeek V4 Pro via https://api.deepseek.com
+// Supports two providers:
+//   - Primary: GLM 5.2 via ZhipuAI (complex tasks: vulnerability analysis, protocol detection)
+//   - Fast: DeepSeek V4 Flash via DeepSeek (simple tasks: report gen, summary)
 //
-// Required env vars:
-//   OPENAI_API_KEY    — DeepSeek API key (or any OpenAI-compatible key)
-//   OPENAI_BASE_URL   — API endpoint (default: https://api.deepseek.com)
-//   LLM_MODEL         — Model name (default: deepseek-chat)
+// Required env vars (primary):
+//   OPENAI_API_KEY    — Primary API key (GLM 5.2)
+//   OPENAI_BASE_URL   — Primary API endpoint
+//   LLM_MODEL         — Primary model name (default: glm-5.2)
+//
+// Optional env vars (fast provider):
+//   OPENAI_API_KEY_FAST   — Fast API key (DeepSeek V4 Flash)
+//   OPENAI_BASE_URL_FAST  — Fast API endpoint (default: https://api.deepseek.com)
+//   LLM_MODEL_FAST        — Fast model name (default: deepseek-chat)
 // ============================================
 
 import OpenAI from 'openai';
@@ -22,28 +29,65 @@ const LLM_CONFIG = {
   timeout: 120_000,
 };
 
-// ─── Singleton OpenAI client ─────────────────────────────────────────────────
+// ─── Provider type ───────────────────────────────────────────────────────────
 
-let client: OpenAI | null = null;
+export type LLMProvider = 'primary' | 'fast';
 
-function getClient(): OpenAI {
-  if (!client) {
+// ─── Singleton OpenAI clients ────────────────────────────────────────────────
+
+let primaryClient: OpenAI | null = null;
+let fastClient: OpenAI | null = null;
+
+function getPrimaryClient(): OpenAI {
+  if (!primaryClient) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new Error(
-        'OPENAI_API_KEY is not set. Please set it in .env to your DeepSeek API key.',
+        'OPENAI_API_KEY is not set. Please set it in .env to your API key.',
       );
     }
-    client = new OpenAI({
+    primaryClient = new OpenAI({
       apiKey,
       baseURL: process.env.OPENAI_BASE_URL || 'https://api.deepseek.com',
       timeout: LLM_CONFIG.timeout,
     });
     console.log(
-      `[LLM] Connected to ${client.baseURL} model=${LLM_CONFIG.model}`,
+      `[LLM] Primary provider: ${primaryClient.baseURL} model=${LLM_CONFIG.model}`,
     );
   }
-  return client;
+  return primaryClient;
+}
+
+function getFastClient(): OpenAI | null {
+  const apiKey = process.env.OPENAI_API_KEY_FAST;
+  if (!apiKey) return null;
+  if (!fastClient) {
+    fastClient = new OpenAI({
+      apiKey,
+      baseURL: process.env.OPENAI_BASE_URL_FAST || 'https://api.deepseek.com',
+      timeout: LLM_CONFIG.timeout,
+    });
+    console.log(
+      `[LLM] Fast provider: ${fastClient.baseURL} model=${process.env.LLM_MODEL_FAST || 'deepseek-chat'}`,
+    );
+  }
+  return fastClient;
+}
+
+function getClient(provider?: LLMProvider): OpenAI {
+  if (provider === 'fast') {
+    const fast = getFastClient();
+    if (fast) return fast;
+    console.warn('[LLM] Fast provider not configured, falling back to primary');
+  }
+  return getPrimaryClient();
+}
+
+function getModelForProvider(provider?: LLMProvider): string {
+  if (provider === 'fast') {
+    return process.env.LLM_MODEL_FAST || 'deepseek-chat';
+  }
+  return LLM_CONFIG.model;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -75,13 +119,15 @@ export async function chatCompletion(
   systemPrompt: string,
   userPrompt: string,
   options: Partial<typeof LLM_CONFIG> = {},
+  provider?: LLMProvider,
 ): Promise<string> {
   const config = { ...LLM_CONFIG, ...options };
-  const openai = getClient();
+  const openai = getClient(provider);
+  const model = provider ? getModelForProvider(provider) : config.model;
 
   try {
     const completion = await openai.chat.completions.create({
-      model: config.model,
+      model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -114,12 +160,13 @@ export async function chatWithRetry(
   systemPrompt: string,
   userPrompt: string,
   maxRetries: number = 3,
+  provider?: LLMProvider,
 ): Promise<string> {
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await chatCompletion(systemPrompt, userPrompt);
+      return await chatCompletion(systemPrompt, userPrompt, {}, provider);
     } catch (error: unknown) {
       // Quota/rate-limit errors: do NOT retry, fail immediately
       if (error instanceof QuotaExceededError) {
@@ -149,8 +196,9 @@ export async function chatWithRetry(
 export async function getJSONResponse<T>(
   systemPrompt: string,
   userPrompt: string,
+  provider?: LLMProvider,
 ): Promise<T> {
-  const response = await chatCompletion(systemPrompt, userPrompt);
+  const response = await chatCompletion(systemPrompt, userPrompt, {}, provider);
   return parseJSONFromLLM<T>(response);
 }
 
@@ -270,13 +318,16 @@ export async function getStructuredJSONResponse<T>(
   userPrompt: string,
   jsonSchema: Record<string, unknown>,
   options: Partial<typeof LLM_CONFIG> = {},
+  provider?: LLMProvider,
 ): Promise<T> {
   const mode = getStructuredOutputMode();
   const config = { ...LLM_CONFIG, ...options };
+  const model = provider ? getModelForProvider(provider) : config.model;
+  const configWithModel = { ...config, model };
 
   if (mode === 'tool') {
     try {
-      return await getStructuredJSONViaTool<T>(systemPrompt, userPrompt, jsonSchema, config);
+      return await getStructuredJSONViaTool<T>(systemPrompt, userPrompt, jsonSchema, configWithModel);
     } catch (error) {
       console.warn('[LLM] Structured output via tool failed, falling back to json_schema:', error instanceof Error ? error.message : error);
     }
@@ -284,14 +335,14 @@ export async function getStructuredJSONResponse<T>(
 
   if (mode === 'tool' || mode === 'json_schema') {
     try {
-      return await getStructuredJSONViaSchema<T>(systemPrompt, userPrompt, jsonSchema, config);
+      return await getStructuredJSONViaSchema<T>(systemPrompt, userPrompt, jsonSchema, configWithModel);
     } catch (error) {
       console.warn('[LLM] Structured output via json_schema failed, falling back to markdown:', error instanceof Error ? error.message : error);
     }
   }
 
   // Final fallback: markdown mode (always works)
-  return getJSONResponse<T>(systemPrompt, userPrompt);
+  return getJSONResponse<T>(systemPrompt, userPrompt, provider);
 }
 
 /**

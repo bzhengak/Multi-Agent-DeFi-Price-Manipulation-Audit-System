@@ -11,6 +11,7 @@ export interface HistoryCase {
   victim_contract_address: string;
   note: string;
   vulnerability_pattern?: string;
+  pattern_ids?: string[];
 }
 
 export interface HistoryCasesData {

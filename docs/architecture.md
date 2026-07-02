@@ -98,18 +98,21 @@ flowchart TD
 
 ---
 
-## 3. OTAU Loop Wiring
+## 3. OTAU Loop + Learning Evolution
 
 ```
 VulnerabilityAnalysisAgent.run()
   │
   ├─ iteration 1 ──────────────────────────────────────────────────────
   │   observe()  → ProtocolTypeDetector + ContextManager.build()
+  │              → memory.recall() ← Layer 1: retrieve past audit experiences
+  │              → pastExperiences passed to optimizeUserPrompt()
   │   think()    → "Classified as {type}, analyze with priority patterns"
   │   act()      → PromptOptimizer.optimizeSystemPrompt()
+  │              → PromptOptimizer.optimizeUserPrompt(pastExperiences) 
   │              → this.tools.execute('vulnerability_analyzer', {systemPrompt, userPrompt})
   │              → LLMClient.getJSON() via ToolRegistry
-  │   update()   → memory.remember(iteration result as working memory)
+  │   update()   → memory.remember(enhanced metadata for better recall)
   │
   ├─ iteration 2+ ─────────────────────────────────────────────────────
   │   observe()  → Review previous iteration result
@@ -121,6 +124,27 @@ VulnerabilityAnalysisAgent.run()
      • maxIterations reached → finalize
      • action.type === 'finalize' → finalize
      • convergence delta < 0.05 → finalize (T4)
+     
+AuditOrchestrator.executePipeline()
+  └─ completion → Layer 2: ingestAuditResult() → history.json grows
+
+ContextManager.build()
+  └─ Layer 3: memory.searchSemantic() → supplements keyword case filter
+```
+
+### Learning Enhancements (Layer 1 + Layer 3)
+
+```
+observe() ──→ memory.recall({keywords: [protocolType, blockchain, priorityVulns]})
+                   │
+                   └──→ pastExperiences → prompt-optimizer → LLM prompt
+                   │
+                   └──→ "## Past Audit Experiences (from memory)" section
+
+ContextManager.build() ──→ memory.searchSemantic(query) 
+                   │
+                   └──→ supplements keyword-based case filtering
+                   └──→ dedup by CASE-XXX ID before adding
 ```
 
 ### Tool Registration (T1)
@@ -285,6 +309,8 @@ src/lib/agents/
 
 src/lib/
 ├── llm.ts                         — [DONE] OpenAI-compatible (DeepSeek V4 Pro)
+├── learning/
+│   └── case-ingester.ts            — [LEARN DONE] Auto-ingest audit results into history.json
 ├── cost/
 │   ├── types.ts                     — [DONE] AttackCostEstimate interface
 │   ├── chain-native-token.ts        — [DONE] 7-chain native token mapping
@@ -302,17 +328,24 @@ src/app/api/analyze/
 ├── route.ts                       — [DONE] SSE stream + polling dual-mode
 └── state.ts                       — [DONE] In-memory task state + EventEmitter + TTL
 
-eval/                              — [T12 DONE] Evaluation harness (33 pos + 15 neg + baselines)
-├── types.ts                        — [T12 DONE] EvalCase, EvalResult, MetricsResult
+eval/                              — [T12 DONE] Evaluation harness (10+10 balanced + PoC)
+├── types.ts                        — [T12 DONE] EvalCase, EvalResult, MetricsResult (+ Precision)
 ├── stats.ts                        — [T12 DONE] Wilson CI, Bootstrap CI, Jaccard similarity
-├── metrics.ts                      — [T12 DONE] Hit Rate, Per-pattern Recall, FP Rate
-├── report.ts                       — [T12 DONE] Markdown report generator
+├── metrics.ts                      — [T12 DONE] Hit Rate, Per-pattern Recall+Precision, Overall Precision, FP Rate
+├── report.ts                       — [T12 DONE] 3-table Markdown report (positive/negative/per-pattern)
+├── run-eval.ts                     — [T12 DONE] Main entry point
 ├── run-agent.ts                    — [T12 DONE] Run system on all cases
 ├── run-baselines.ts                — [T12 DONE] Run Raw LLM + Slither baselines
-├── run-eval.ts                     — [T12 DONE] Main entry point
+├── run-poc-eval.ts                 — [T12 NEW] PoC reproduction evaluation entry point
 ├── dataset/
-│   ├── positives.ts                — [T12 DONE] Load from history.json (33 cases)
-│   └── negatives.ts                — [T12 DONE] 15 safe contracts
+│   ├── positives.ts                — [T12 DONE] 10 audit-verified cases (CertiK/SlowMist/BlockSec GT)
+│   └── negatives.ts                — [T12 DONE] 10 safe contracts (OpenZeppelin/Trail of Bits audited)
+├── poc/                            — [T12 NEW] PoC reproduction evaluation system
+│   ├── types.ts                    — [T12 NEW] PocEvalCase, PocGenerationResult, ForgeTestResult
+│   ├── generate-poc.ts             — [T12 NEW] LLM-generated Foundry PoC from system audit output
+│   ├── run-forge-test.ts           — [T12 NEW] forge test execution + compilation check
+│   ├── download-reference.ts       — [T12 NEW] DeFiHackLabs reference PoC downloader
+│   └── report.ts                   — [T12 NEW] PoC evaluation report (pass/fail per case)
 └── results/                        — [T12] Generated evaluation reports
 ```
 
@@ -331,7 +364,11 @@ eval/                              — [T12 DONE] Evaluation harness (33 pos + 1
 | OD-01~05 + CR-01~05 | Complete 21-pattern coverage per vulnerabilities.json |
 | T7 skipped | Slither+TS AST dual verification descoped; LLM-only reasoning with cross-contract graph |
 | T8: @solidity-parser/parser | Full AST + visit() walker; cross-contract call graph injection |
-| T12: Full eval harness | 33 positives + 15 negatives + Raw LLM/Slither baselines |
+| T12: Full eval harness | 10+10 balanced dataset, Precision metrics, PoC reproduction evaluation |
+| Learning Layer 1 | observe() recalls episodic memory → prompt injection in optimizeUserPrompt |
+| Learning Layer 2 | executePipeline() auto-ingests audit results into history.json (dedup by address) |
+| Learning Layer 3 | ContextManager.build() supplements keyword filtering with semantic search |
+| Enhanced metadata | memory.remember() stores contractName, blockchain, protocolType, priorityVulns for better recall |
 
 ---
 
@@ -348,6 +385,11 @@ T9 [DONE] (Per-vuln overlay) ─────────────────
 T10 (Cost estimation) ─────────────────────────────────┤
 T11 (Adaptive budget) ─────────────────────────────────┤
 T14 (SSE state machine) ───────────────────────────────┘
+                                                       ↑
+LEARN (Learning Improvement) ──────────────────────────┤
+  Layer 1: recall() in observe()
+  Layer 2: ingestAuditResult() after pipeline
+  Layer 3: searchSemantic() in context build
 ```
 
 **Critical path**: T1 → T2 → T5 → T8 → T12 → T13 (T7 skipped)

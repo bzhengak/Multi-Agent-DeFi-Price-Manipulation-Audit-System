@@ -53,7 +53,29 @@ export function computeMetrics(
       const recall = n > 0 ? tp / n : 0;
       return { patternId, n, recall, ci: wilsonCI(tp, n), tp, fn };
     })
-    .filter(p => p.n >= 7);
+    .filter(p => p.n >= 1);
+
+  const perPatternPrecision = Array.from(allPatterns)
+    .map(patternId => {
+      const positiveTp = positiveCases.filter(c => {
+        const result = positiveResults.find(r => r.caseId === c.caseId);
+        return result?.detectedPatternIds.includes(patternId) && c.expectedPatternIds.includes(patternId);
+      }).length;
+
+      const positiveFp = positiveCases.filter(c => {
+        const result = positiveResults.find(r => r.caseId === c.caseId);
+        return result?.detectedPatternIds.includes(patternId) && !c.expectedPatternIds.includes(patternId);
+      }).length;
+
+      const negativeFp = negativeResults.filter(r => r.detectedPatternIds.includes(patternId)).length;
+
+      const tp = positiveTp;
+      const fp = positiveFp + negativeFp;
+      const nDetected = tp + fp;
+      const precision = nDetected > 0 ? tp / nDetected : 0;
+
+      return { patternId, nDetected, precision, ci: wilsonCI(tp, nDetected), tp, fp };
+    });
 
   const fpCount = negativeResults.reduce((sum, r) => sum + r.detectedPatternIds.length, 0);
   const negativeFpRate = {
@@ -63,5 +85,22 @@ export function computeMetrics(
     totalContracts: negativeCases.length,
   };
 
-  return { hitRate, jaccardMean, perPatternRecall, negativeFpRate };
+  const totalTp = positiveCases.reduce((sum, c) => {
+    const result = positiveResults.find(r => r.caseId === c.caseId);
+    const tpCount = c.expectedPatternIds.filter(p => result?.detectedPatternIds.includes(p)).length;
+    return sum + tpCount;
+  }, 0);
+  const totalFp = fpCount + positiveResults.reduce((sum, r) => {
+    const eCase = positiveCases.find(c => c.caseId === r.caseId);
+    const fpCount2 = r.detectedPatternIds.filter(p => !eCase?.expectedPatternIds.includes(p)).length;
+    return sum + fpCount2;
+  }, 0);
+  const overallPrecision = {
+    value: (totalTp + totalFp) > 0 ? totalTp / (totalTp + totalFp) : 0,
+    ci: wilsonCI(totalTp, totalTp + totalFp),
+    tp: totalTp,
+    fp: totalFp,
+  };
+
+  return { hitRate, jaccardMean, perPatternRecall, perPatternPrecision, negativeFpRate, overallPrecision };
 }

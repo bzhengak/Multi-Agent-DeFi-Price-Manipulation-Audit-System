@@ -17,6 +17,7 @@ export interface EvalResult {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   vulnerabilities: any[];
   sourceAvailable: boolean;
+  partial?: boolean;
   error?: string;
   durationMs: number;
 }
@@ -40,5 +41,14 @@ export interface MetricsResult {
     tp: number;
     fn: number;
   }>;
+  perPatternPrecision: Array<{
+    patternId: string;
+    nDetected: number;
+    precision: number;
+    ci: [number, number];
+    tp: number;
+    fp: number;
+  }>;
   negativeFpRate: { value: number; ci: [number, number]; fpCount: number; totalContracts: number };
+  overallPrecision: { value: number; ci: [number, number]; tp: number; fp: number };
 }

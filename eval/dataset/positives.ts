@@ -12,6 +12,7 @@ interface HistoryCase {
   note: string;
   vulnerability_pattern: string;
   pattern_ids: string[];
+  data_resource: string;
 }
 
 const EXPLORER_TO_CHAIN: Record<string, string> = {
@@ -19,10 +20,23 @@ const EXPLORER_TO_CHAIN: Record<string, string> = {
   'bscscan': 'bsc',
   'arbiscan': 'arbitrum',
   'basescan': 'base',
-  'opbnb': 'opbnb',
+  'opbnbscan': 'opbnb',
   'polygonscan': 'polygon',
   'snowtrace': 'avalanche',
 };
+
+const POSITIVE_CASE_IDS = [
+  'CASE-001', // OD-01, LR-01   | CertiK | BSC
+  'CASE-012', // OD-01          | SlowMist + Verichains | Ethereum
+  'CASE-018', // OD-01          | BlockSec | Ethereum
+  'CASE-019', // OD-03, AC-02   | HashDit | BSC
+  'CASE-021', // AC-01, OD-03   | SlowMist | opBNB
+  'CASE-022', // CL-02          | CertiK + Halborn | BSC
+  'CASE-023', // AC-02, CR-04   | SlowMist + Dedaub | Ethereum
+  'CASE-024', // CL-01, LR-02   | BlockSec | Ethereum
+  'CASE-027', // TO-03          | Sherlock + BlockSec | Arbitrum
+  'CASE-033', // TO-02, AC-01   | SlowMist | Ethereum
+];
 
 export function parseContractUrl(url: string): { blockchain: string; address: string } | null {
   const match = url.match(/https?:\/\/(\w+)\.(?:com|io)\/address\/(0x[a-fA-F0-9]{40})/);
@@ -46,7 +60,10 @@ export function loadPositiveCases(): EvalCase[] {
   const historyRaw = JSON.parse(readFileSync(historyPath, 'utf-8'));
   const cases: HistoryCase[] = historyRaw.cases || historyRaw;
 
-  return cases.map(c => {
+  return cases
+    .filter(c => POSITIVE_CASE_IDS.includes(c.id))
+    .sort((a, b) => POSITIVE_CASE_IDS.indexOf(a.id) - POSITIVE_CASE_IDS.indexOf(b.id))
+    .map(c => {
     const parsed = parseContractUrl(c.victim_contract_address || c.attack_contract_address);
     const txHash = parseTxHash(c.attack_transaction || '');
 

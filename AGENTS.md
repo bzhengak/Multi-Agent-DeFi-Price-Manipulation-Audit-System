@@ -1,6 +1,6 @@
 # DeFi Price Manipulation Analyzer — Agent 系统升级指南
 
-> 版本: v3.6.0 | 最后更新: 2026-06-11
+> 版本: v3.7.0 | 最后更新: 2026-07-02
 > 本文件是 opencode 中 DeepSeek V4 Pro 模型的项目级指令文件，指导 AI 代理在 Workflow→Agent 架构升级开发中遵循统一的技术规范、架构约束和工作流程。
 
 ---
@@ -38,6 +38,8 @@
 - **工具注册**：ToolRegistry 工具管理中心（含重试、缓存策略）
 - **记忆系统**：MemorySystem（工作记忆/情景记忆/语义记忆三层架构）
 - **协议识别**：ProtocolTypeDetector（8种DeFi协议自动识别）
+- **双模型路由**：GLM 5.2（复杂任务） + DeepSeek V4 Flash（简单任务），支持 per-LLM-call provider 路由
+- **Quota 优雅降级**：LLM 配额耗尽时自动保存已有结果并停止，不丢数据
 - **攻击重建**：PriceManipulationReconstructor（21种攻击模式攻击叙事生成）
 - **置信度校准**：ConfidenceCalibrator（多维置信度评估与校准）
 
@@ -90,19 +92,22 @@
 | **T4** | 置信度差值提前停止 | — | 0.5 | S | `[x]` |
 | **T5** | LLM 结构化输出（response_format: json_schema） | T1 | 1 | M | `[x]` |
 | **T6** | 模式搬进 Prisma + CLI ingest 脚本 | — | 2 | M | `[x]` |
-| **T7** | Slither + TS AST 双层验证（已舍弃） | T1, T5 | 3 | M | `[-]` |
+| **T7** | Slither + TS AST 双层验证 | — | — | — | `[-]` Delisted |
 | **T8** | 跨合约调用图构建器（@solidity-parser/parser） | T1, T6 | 2 | M | `[x]` |
 | **T9** | 攻击重建改为 per-vulnerability 覆盖模板（Data-Driven Overlay + LLM Hybrid） | — | 1 | M | `[x]` |
 | **T10** | 确定性攻击成本估算（3 Tool + pattern-cost-profiles + estimator） | — | 1–2 | S | `[x]` |
-| **T11** | 自适应迭代预算 | T1, T7, T8 | 3–5 | M | `[x]` |
-| **T12** | 评估 harness（33 正样本 + 15 负样本 + Slither/Raw LLM 基线） | T7 | 2 | M | `[x]` |
+| **T11** | 自适应迭代预算 | T1, T8 | 3–5 | M | `[x]` |
+| **T12** | 评估 harness（10+10 平衡集 + Precision 指标 + PoC 复现评估） | — | 2 | M | `[x]` |
 | **T13** | 文档定稿（OD-05 进表、协议映射） | T6 | 1–2 | S | `[x]` |
 | **T14** | `/api/analyze` SSE 单一状态机 | — | 1 | S | `[x]` |
+| **T15** | 双模型路由 + Quota 优雅降级 | T5 | 1 | S | `[x]` |
+| **LEARN** | 学习进化机制（记忆回路 + 自动入库 + RAG 检索增强） | T1, T8 | 1 | M | `[x]` |
 
 > 关键路径: T1 → T2 → T8 → T12 → T13（T7 已舍弃，改为 T8 跨合约分析）
 > 最低毕业线: T1, T2, T3, T5, T6, T8, T12, T13 = ~14–17 人天（3 周）
 > 总人天: 26–36（约 5–7 周）
-> v1.2 变更: T7 改为 Slither + TS AST 双层验证（3天），Mythril 完整版移到附录 C
+> v1.2 变更: T7 已移除（Slither + TS AST 双层验证 descoped），依赖 LLM-only 推理 + 跨合约图
+> v1.3 变更: T15 新增（双模型路由 + Quota 优雅降级）
 
 ---
 
