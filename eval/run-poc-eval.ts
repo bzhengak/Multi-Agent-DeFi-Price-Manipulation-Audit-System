@@ -1,11 +1,56 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync, writeFileSync, renameSync, mkdirSync } from 'fs';
+import { join, dirname } from 'path';
 import { generatePoc } from './poc/generate-poc';
 import { runForgeTest } from './poc/run-forge-test';
 import { downloadReferencePoc, extractPocUrl } from './poc/download-reference';
 import { computePocMetrics, generatePocReport, savePocReport } from './poc/report';
 import type { PocEvalCase, PocEvalResult } from './poc/types';
 import { parseContractUrl, parseTxHash } from './dataset/utils';
+
+const CHECKPOINT_PATH = join(__dirname, 'results', 'poc-checkpoint.json');
+
+interface PocCheckpoint {
+  completedCaseIds: string[];
+  results: PocEvalResult[];
+  quotaExhausted: boolean;
+  updatedAt: string;
+}
+
+function loadCheckpoint(): PocCheckpoint | null {
+  if (!existsSync(CHECKPOINT_PATH)) return null;
+  try {
+    const raw = readFileSync(CHECKPOINT_PATH, 'utf-8');
+    return JSON.parse(raw) as PocCheckpoint;
+  } catch {
+    console.warn('Checkpoint file corrupted, starting fresh');
+    return null;
+  }
+}
+
+function saveCheckpoint(completedCaseIds: string[], results: PocEvalResult[], quotaExhausted: boolean): void {
+  const tmp = CHECKPOINT_PATH + '.tmp';
+  mkdirSync(dirname(CHECKPOINT_PATH), { recursive: true });
+  writeFileSync(tmp, JSON.stringify({ completedCaseIds, results, quotaExhausted, updatedAt: new Date().toISOString() }, null, 2), 'utf-8');
+  renameSync(tmp, CHECKPOINT_PATH);
+}
+
+function deleteCheckpoint(): void {
+  try {
+    if (existsSync(CHECKPOINT_PATH)) {
+      const backup = CHECKPOINT_PATH.replace('.json', '.bak.json');
+      renameSync(CHECKPOINT_PATH, backup);
+    }
+  } catch {
+    // non-fatal
+  }
+}
+
+function isQuotaError(error: string): boolean {
+  const msg = error.toLowerCase();
+  return msg.includes('quota') || msg.includes('insufficient') ||
+         msg.includes('rate limit') || msg.includes('partial') ||
+         msg.includes('billing') || msg.includes('payment');
+}
 
 function loadPocCases(): PocEvalCase[] {
   const historyPath = join(process.cwd(), 'data', 'history.json');
@@ -41,12 +86,44 @@ function loadPocCases(): PocEvalCase[] {
 async function main() {
   console.log('=== PoC Reproduction Evaluation ===\n');
 
-  const cases = loadPocCases();
-  console.log(`Loaded ${cases.length} cases with DeFiHackLabs PoC\n`);
+  // Load all cases
+  const allCases = loadPocCases();
+  console.log(`Loaded ${allCases.length} cases with DeFiHackLabs PoC\n`);
 
-  const results: PocEvalResult[] = [];
+  // Load checkpoint
+  const checkpoint = loadCheckpoint();
+  let completedIds: Set<string>;
+  let results: PocEvalResult[];
+  let quotaExhausted: boolean;
 
-  for (const evalCase of cases) {
+  if (checkpoint) {
+    completedIds = new Set(checkpoint.completedCaseIds);
+    results = checkpoint.results;
+    quotaExhausted = checkpoint.quotaExhausted;
+    console.log(`Checkpoint found: ${completedIds.size} cases already processed`);
+    if (quotaExhausted) {
+      console.log('  (previous run stopped due to quota exhaustion)\n');
+    }
+  } else {
+    completedIds = new Set();
+    results = [];
+    quotaExhausted = false;
+  }
+
+  // Filter remaining cases
+  const remainingCases = allCases.filter(c => !completedIds.has(c.caseId));
+  if (remainingCases.length === 0) {
+    console.log('All cases already processed. Regenerating report...\n');
+  } else {
+    console.log(`Remaining: ${remainingCases.length} cases\n`);
+  }
+
+  for (const evalCase of remainingCases) {
+    if (quotaExhausted) {
+      console.log(`\n--- ${evalCase.caseId} (SKIPPED: quota exhausted) ---`);
+      continue;
+    }
+
     console.log(`\n--- ${evalCase.caseId} (${evalCase.blockchain}) ---`);
     console.log(`  Contract: ${evalCase.victimAddress}`);
     console.log(`  Reference PoC: ${evalCase.referencePocFileName}`);
@@ -56,6 +133,7 @@ async function main() {
     console.log(`    -> Generation: ${generation.generationSuccess ? 'success' : 'failed: ' + generation.error}`);
 
     if (!generation.generationSuccess) {
+      const isQuota = isQuotaError(generation.error || '');
       results.push({
         caseId: evalCase.caseId,
         generation,
@@ -68,6 +146,13 @@ async function main() {
           durationMs: 0,
         },
       });
+      completedIds.add(evalCase.caseId);
+      saveCheckpoint(Array.from(completedIds), results, isQuota);
+      if (isQuota) {
+        quotaExhausted = true;
+        console.log('    -> QUOTA EXHAUSTED: stopping further processing');
+        break;
+      }
       continue;
     }
 
@@ -93,19 +178,34 @@ async function main() {
       forgeTest,
       referencePocResult,
     });
+    completedIds.add(evalCase.caseId);
+    saveCheckpoint(Array.from(completedIds), results, false);
+  }
+
+  if (quotaExhausted) {
+    console.log(`\n⚠ Quota exhausted after ${completedIds.size}/${allCases.length} cases. Checkpoint saved.`);
+    console.log('  Run `pnpm eval:poc` again to resume from where it stopped.\n');
   }
 
   console.log('\n=== Generating report ===');
+  // Always compute metrics on whatever results we have
   const metrics = computePocMetrics(results);
   const report = generatePocReport(results, metrics);
   savePocReport(report);
 
   console.log('\n=== Summary ===');
   console.log(`  Total: ${metrics.totalCases}`);
-  console.log(`  Generated: ${metrics.generationSuccess}`);
+  console.log(`  Generation success: ${metrics.generationSuccess}`);
   console.log(`  Compiled: ${metrics.compiled}`);
   console.log(`  Passed: ${metrics.passed} (${(metrics.reproductionRate * 100).toFixed(1)}%)`);
   console.log(`  Reference passed: ${metrics.referencePassed}`);
+
+  if (!quotaExhausted && completedIds.size === allCases.length) {
+    deleteCheckpoint();
+    console.log('  Checkpoint cleaned up (all cases completed).');
+  } else {
+    console.log(`  Checkpoint kept at ${CHECKPOINT_PATH} (${allCases.length - completedIds.size} cases remaining).`);
+  }
 }
 
 main().catch(console.error);
