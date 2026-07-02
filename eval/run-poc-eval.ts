@@ -5,7 +5,7 @@ import { runForgeTest } from './poc/run-forge-test';
 import { downloadReferencePoc, extractPocUrl } from './poc/download-reference';
 import { computePocMetrics, generatePocReport, savePocReport } from './poc/report';
 import type { PocEvalCase, PocEvalResult } from './poc/types';
-import { parseContractUrl, parseTxHash } from './dataset/positives';
+import { parseContractUrl, parseTxHash } from './dataset/utils';
 
 function loadPocCases(): PocEvalCase[] {
   const historyPath = join(process.cwd(), 'data', 'history.json');

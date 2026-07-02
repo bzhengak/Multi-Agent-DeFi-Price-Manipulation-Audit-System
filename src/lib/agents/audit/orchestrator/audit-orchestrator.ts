@@ -272,18 +272,21 @@ export class AuditOrchestrator {
 
     this.emit({ stage: 'completed', progress: 100, details: `Audit complete in ${Date.now() - startTime}ms` });
 
-    // Layer 2: Auto-ingest audit result into history.json
-    if (analysisResult!.vulnerabilities.length > 0) {
+    // Learning evolution: ingest audit result into history.json (skipped in EVAL_MODE)
+    if (process.env.EVAL_MODE !== 'true') {
       try {
-        const { ingestAuditResult } = await import('@/lib/learning/case-ingester');
-        await ingestAuditResult({
-          contractName, blockchain, address,
-          caseNote: `Auto-audited contract: ${contractName} on ${blockchain}`,
-          analysisResult: analysisResult!, classification: classification!,
-          source: 'auto-audit',
-        });
+        const { ingestAuditResult } = await import('../learning/case-ingester');
+        const ingestResult = await ingestAuditResult(
+          { analysisResult: analysisResult!, classification: classification!, reconstruction: reconstruction!, calibratedResult: calibratedResult!, reportMarkdown: reportMarkdown!, summary },
+          blockchain,
+          address,
+          { pocResult: undefined },
+        );
+        if (ingestResult.ingested) {
+          console.log(`[Learning] ${ingestResult.tier}: ${ingestResult.reason}`);
+        }
       } catch {
-        // Ingestion failure is non-fatal
+        // Learning ingest failure is non-fatal
       }
     }
 
@@ -437,17 +440,21 @@ Please output the complete analysis results in the specified JSON format. Set co
 
     this.emit({ stage: 'completed', progress: 100, details: `Context-based audit complete in ${Date.now() - startTime}ms` });
 
-    // Layer 2: Auto-ingest audit result into history.json
-    if (analysisResult!.vulnerabilities.length > 0) {
+    // Learning evolution: ingest audit result into history.json (skipped in EVAL_MODE)
+    if (process.env.EVAL_MODE !== 'true') {
       try {
-        const { ingestAuditResult } = await import('@/lib/learning/case-ingester');
-        await ingestAuditResult({
-          contractName: caseId, blockchain, address: contractAddress,
-          caseNote, analysisResult: analysisResult!, classification: classification!,
-          source: 'auto-audit',
-        });
+        const { ingestAuditResult } = await import('../learning/case-ingester');
+        const ingestResult = await ingestAuditResult(
+          { analysisResult: analysisResult!, classification: classification!, reconstruction: reconstruction!, calibratedResult: calibratedResult!, reportMarkdown: reportMarkdown!, summary },
+          blockchain,
+          contractAddress,
+          { pocResult: undefined },
+        );
+        if (ingestResult.ingested) {
+          console.log(`[Learning] ${ingestResult.tier}: ${ingestResult.reason}`);
+        }
       } catch {
-        // Ingestion failure is non-fatal
+        // Learning ingest failure is non-fatal
       }
     }
 

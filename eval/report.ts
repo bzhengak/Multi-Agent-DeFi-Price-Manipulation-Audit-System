@@ -122,9 +122,15 @@ Stage 7: Report Generation
 ## 2. Evaluation Methodology
 
 ### 2.1 Dataset
-- **Positive samples**: ${positiveCases.length} real DeFi attack cases (audit-verified ground truth from CertiK, SlowMist, BlockSec, etc.)
-- **Negative samples**: ${negativeCases.length} safe contracts (OpenZeppelin + audited by Trail of Bits, Quantstamp, etc.)
-- Ground truth source: Professional audit reports, not project team labels
+- **Positive samples**: ${positiveCases.length} recent DeFi attack cases (2026-04 to 2026-06) sourced from DeFiHackLabs,
+  NOT present in the system's knowledge base (history.json).
+  Covering 6/21 patterns: OD-01, LR-01, CL-03, AC-02, TO-03, CR-01.
+  Chains: BSC (7), Ethereum (2), Base (1).
+- **Negative samples**: ${negativeCases.length} audited safe DeFi protocols (Uniswap V3, Aave V3, Compound V3, etc.)
+- Prior to evaluation, the system completed a full learning cycle on all 33 cases in history.json
+  (including PoC verification via Foundry forge test).
+- No data leakage: positive samples are not in the knowledge base.
+- Evaluation mode (EVAL_MODE=true) prevents audit results from being ingested into the knowledge base.
 
 ### 2.2 Metrics
 - **Case-level Hit Rate** (Wilson 95% CI): ≥1 pattern correctly detected per case
@@ -165,16 +171,14 @@ ${negativesTable(systemResults.negatives)}
 ${perPatternTable(systemMetrics)}
 
 ### 3.5 Zero-case patterns
-The following patterns have no corresponding cases in the 10-case positive set:
+Patterns with zero cases in the positive set (not evaluated):
 
-| Pattern | Status |
-|---------|--------|
+| Pattern | Category |
+|---------|----------|
 ${Array.from(new Set([
-  ...Array.from(systemMetrics.perPatternRecall.map(p => p.patternId)),
-  ...Array.from(systemMetrics.perPatternPrecision.map(p => p.patternId)),
-])).map(id => `| ${id} | Evaluated (${systemMetrics.perPatternRecall.find(p => p.patternId === id)?.n || 0} case(s)) |`).join('\n')}
-
-Other patterns not covered: OD-04, OD-05, TO-01, AC-03, CL-03, CR-01, CR-02 — these have no audit-verified cases in the dataset, listed as Future Work.
+  ...Array.from(systemMetrics.perPatternRecall.filter(p => p.n === 0).map(p => p.patternId)),
+  ...Array.from(systemMetrics.perPatternPrecision.filter(p => p.nDetected === 0).map(p => p.patternId)),
+])).sort().map(id => `| ${id} | Not covered — no ground-truth case in dataset, listed as Future Work |`).join('\n')}
 
 ### 3.6 Slither Baseline Notes
 Slither is only compared on patterns it can detect: TO-03 (reentrancy), AC-01 (access control), CR-03 (unchecked return). All other patterns are N/A for Slither.

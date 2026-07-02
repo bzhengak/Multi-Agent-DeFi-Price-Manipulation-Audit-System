@@ -3,6 +3,7 @@ import { loadHistoryCases, loadVulnerabilityPatterns } from '@/lib/storage/data'
 import { CrossContractTracer } from '../cross-contract/cross-contract-tracer';
 import type { CrossContractSummary } from '../cross-contract/types';
 import type { BlockchainId } from '@/lib/blockchain/config';
+import type { MemoryRecord } from '../../core/memory/storage-adapter';
 
 export interface AnalysisContext {
   contractCode: string;
@@ -54,46 +55,32 @@ export class ContextManager {
     ]);
 
     const relevantPatterns = this.filterRelevantPatterns(allPatterns.patterns, classification);
-    let relevantCases = this.filterRelevantCases(allCases.cases, classification, depth);
+    const relevantCases = this.filterRelevantCases(allCases.cases, classification, depth);
     const focusAreas = this.buildFocusAreas(classification);
 
-    // Layer 3: RAG retrieval via semantic search to supplement keyword-based filtering
+    // Learning evolution: RAG semantic retrieval
+    let semanticMemories: MemoryRecord[] = [];
     try {
-      const { MemorySystem } = await import('@/lib/agents/core/memory/memory');
+      const { MemorySystem } = await import('../../core/memory/memory');
       const memory = new MemorySystem();
       await memory.init();
-
-      const query = `${classification.type} ${classification.priorityVulnerabilities.join(' ')} ${blockchain} ${contractName}`;
-      const semanticResults = await memory.searchSemantic(query, 5);
-
-      if (semanticResults.length > 0) {
-        const existingIds = new Set(relevantCases.map(c => c.id));
-        for (const result of semanticResults) {
-          const caseIdMatch = result.content.match(/CASE-\d{3}/);
-          if (caseIdMatch && !existingIds.has(caseIdMatch[0])) {
-            const originalCase = allCases.cases.find(c => c.id === caseIdMatch[0]);
-            if (originalCase) {
-              relevantCases.push({
-                id: originalCase.id,
-                time: originalCase.time,
-                platform: originalCase.blockchain_platform,
-                vulnerabilityPattern: originalCase.vulnerability_pattern ?? '',
-                description: originalCase.note?.substring(0, 200) ?? '',
-                relevance: 0.5,
-              });
-              existingIds.add(caseIdMatch[0]);
-            }
-          }
-        }
-        relevantCases = relevantCases
-          .sort((a, b) => b.relevance - a.relevance)
-          .slice(0, depth === 'deep' ? 20 : 10);
-      }
-
+      const query = `${classification.type} ${classification.priorityVulnerabilities.join(' ')} ${contractName}`;
+      semanticMemories = await memory.searchSemantic(query, 3);
       await memory.close();
     } catch {
-      // Semantic search failure is non-fatal, fall back to keyword-only results
+      // semantic search failure is non-fatal
     }
+
+    const semanticCases: RelevantCase[] = semanticMemories.map(m => ({
+      id: m.id,
+      time: new Date(m.timestamp).toISOString(),
+      platform: (m.metadata as Record<string, unknown>)?.blockchain as string || 'unknown',
+      vulnerabilityPattern: ((m.metadata as Record<string, unknown>)?.patterns as string[])?.join(', ') || '',
+      description: m.content.substring(0, 200),
+      relevance: m.importance,
+    }));
+
+    const mergedCases = [...relevantCases, ...semanticCases];
 
     let crossContractGraph: CrossContractSummary | undefined;
     if (depth === 'deep' && address) {
@@ -116,7 +103,7 @@ export class ContextManager {
       address,
       classification,
       relevantPatterns,
-      relevantCases,
+      relevantCases: mergedCases,
       focusAreas,
       analysisDepth: depth,
       crossContractGraph,

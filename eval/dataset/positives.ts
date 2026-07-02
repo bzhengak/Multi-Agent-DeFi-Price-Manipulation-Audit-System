@@ -1,83 +1,108 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import type { EvalCase } from '../types';
 
-interface HistoryCase {
-  id: string;
-  time: string;
-  blockchain_platform: string;
-  attack_transaction: string;
-  attack_contract_address: string;
-  victim_contract_address: string;
-  note: string;
-  vulnerability_pattern: string;
-  pattern_ids: string[];
-  data_resource: string;
-}
-
-const EXPLORER_TO_CHAIN: Record<string, string> = {
-  'etherscan': 'ethereum',
-  'bscscan': 'bsc',
-  'arbiscan': 'arbitrum',
-  'basescan': 'base',
-  'opbnbscan': 'opbnb',
-  'polygonscan': 'polygon',
-  'snowtrace': 'avalanche',
-};
-
-const POSITIVE_CASE_IDS = [
-  'CASE-001', // OD-01, LR-01   | CertiK | BSC
-  'CASE-012', // OD-01          | SlowMist + Verichains | Ethereum
-  'CASE-018', // OD-01          | BlockSec | Ethereum
-  'CASE-019', // OD-03, AC-02   | HashDit | BSC
-  'CASE-021', // AC-01, OD-03   | SlowMist | opBNB
-  'CASE-022', // CL-02          | CertiK + Halborn | BSC
-  'CASE-023', // AC-02, CR-04   | SlowMist + Dedaub | Ethereum
-  'CASE-024', // CL-01, LR-02   | BlockSec | Ethereum
-  'CASE-027', // TO-03          | Sherlock + BlockSec | Arbitrum
-  'CASE-033', // TO-02, AC-01   | SlowMist | Ethereum
+const POSITIVE_CASES: EvalCase[] = [
+  {
+    caseId: 'POS-2026-001',
+    source: 'manual',
+    blockchain: 'bsc',
+    victimAddress: '0xeFFcB496CaE89E7E92abe17d22386345707CEEe4',
+    contractName: 'CookFinanceIssuance',
+    sourceAvailable: true,
+    expectedPatternIds: ['OD-01'],
+    caseNote: 'Price Oracle Manipulation. CookFinanceIssuance exploited via oracle price manipulation on BSC. 2026-06-27.',
+  },
+  {
+    caseId: 'POS-2026-002',
+    source: 'manual',
+    blockchain: 'bsc',
+    victimAddress: '0xBB3051dF2D3E408DAE6E6dAa2296BC6215F0dCFd',
+    contractName: 'OceanBPoolSideStaking',
+    sourceAvailable: true,
+    expectedPatternIds: ['CL-03'],
+    caseNote: 'BPool single-sided join/exit math with SideStaking gulp accounting flaw. 2026-06-25.',
+  },
+  {
+    caseId: 'POS-2026-003',
+    source: 'manual',
+    blockchain: 'bsc',
+    victimAddress: '0xF2ca2A3572B26Ae7c479dC7ae36D922113B1bdF2',
+    contractName: 'DLMC',
+    sourceAvailable: true,
+    expectedPatternIds: ['OD-01'],
+    caseNote: 'Reserve-derived livePrice manipulation. DLMC token exploited via reserve-based pricing. 2026-06-24.',
+  },
+  {
+    caseId: 'POS-2026-004',
+    source: 'manual',
+    blockchain: 'bsc',
+    victimAddress: '0x58815CDF9955121a6274680ab396a36FC9e00000',
+    contractName: 'OLPC',
+    sourceAvailable: true,
+    expectedPatternIds: ['LR-01'],
+    caseNote: 'OLPC pair reserve manipulation. Exploited via pair reserve manipulation on BSC. 2026-06-20.',
+  },
+  {
+    caseId: 'POS-2026-005',
+    source: 'manual',
+    blockchain: 'bsc',
+    victimAddress: '0x6C60bf5DB0670ae94489d3DdE2c60f271625dB50',
+    contractName: 'DIP',
+    sourceAvailable: true,
+    expectedPatternIds: ['LR-01'],
+    caseNote: 'Fee-on-Transfer Reserve Manipulation. DIP token exploited via fee-on-transfer reserve manipulation. 2026-06-16.',
+  },
+  {
+    caseId: 'POS-2026-006',
+    source: 'manual',
+    blockchain: 'ethereum',
+    victimAddress: '0x0EBD5eC91680d3B0CEDbb1d5BB61851154D3eDb6',
+    contractName: 'TOPBPool',
+    sourceAvailable: true,
+    expectedPatternIds: ['AC-02'],
+    caseNote: 'Governance-controlled token mint and Balancer pool drain. TOP token exploited via governance mint. 2026-06-09.',
+  },
+  {
+    caseId: 'POS-2026-007',
+    source: 'manual',
+    blockchain: 'bsc',
+    victimAddress: '0x796C5E8cA10010654DafAeF096bd1F4a7ad87672',
+    contractName: 'AISOTHPresale',
+    sourceAvailable: true,
+    expectedPatternIds: ['OD-01'],
+    caseNote: 'Fixed-price presale arbitrage. AISOTHPresale exploited via fixed-price presale arbitrage. 2026-06-05.',
+  },
+  {
+    caseId: 'POS-2026-008',
+    source: 'manual',
+    blockchain: 'bsc',
+    victimAddress: '0x047547A4fa4a67C1032d249B49EC1a79c0460BAD',
+    contractName: 'BYToken',
+    sourceAvailable: true,
+    expectedPatternIds: ['LR-01'],
+    caseNote: 'Permissionless triggerAutoBurn Reserve Manipulation. BYToken exploited via permissionless burn. 2026-06-04.',
+  },
+  {
+    caseId: 'POS-2026-009',
+    source: 'manual',
+    blockchain: 'base',
+    victimAddress: '0x55555522005BcAE1c2424D474BfD5ed477749E3e',
+    contractName: 'TesseraSwap',
+    sourceAvailable: true,
+    expectedPatternIds: ['TO-03'],
+    caseNote: 'Callback Repayment Price Spread. TesseraSwap exploited via callback repayment price spread on Base. 2026-05-18.',
+  },
+  {
+    caseId: 'POS-2026-010',
+    source: 'manual',
+    blockchain: 'ethereum',
+    victimAddress: '0x7A7bAB45363Efb0394Ff27bfA29bb7C0534cA8C9',
+    contractName: 'AaveRebalancerCreditDelegation',
+    sourceAvailable: true,
+    expectedPatternIds: ['CR-01'],
+    caseNote: 'Arbitrary External Call / Credit Delegation Abuse. AaveRebalancer exploited via credit delegation on Ethereum. 2026-04-19.',
+  },
 ];
 
-export function parseContractUrl(url: string): { blockchain: string; address: string } | null {
-  const match = url.match(/https?:\/\/(\w+)\.(?:com|io)\/address\/(0x[a-fA-F0-9]{40})/);
-  if (match) {
-    const explorer = match[1];
-    const chain = EXPLORER_TO_CHAIN[explorer];
-    if (chain) {
-      return { blockchain: chain, address: match[2] };
-    }
-  }
-  return null;
-}
-
-export function parseTxHash(url: string): string | null {
-  const match = url.match(/(0x[a-fA-F0-9]{64})/);
-  return match ? match[1] : null;
-}
-
 export function loadPositiveCases(): EvalCase[] {
-  const historyPath = join(process.cwd(), 'data', 'history.json');
-  const historyRaw = JSON.parse(readFileSync(historyPath, 'utf-8'));
-  const cases: HistoryCase[] = historyRaw.cases || historyRaw;
-
-  return cases
-    .filter(c => POSITIVE_CASE_IDS.includes(c.id))
-    .sort((a, b) => POSITIVE_CASE_IDS.indexOf(a.id) - POSITIVE_CASE_IDS.indexOf(b.id))
-    .map(c => {
-    const parsed = parseContractUrl(c.victim_contract_address || c.attack_contract_address);
-    const txHash = parseTxHash(c.attack_transaction || '');
-
-    return {
-      caseId: c.id,
-      source: 'history.json' as const,
-      blockchain: parsed?.blockchain || c.blockchain_platform?.toLowerCase() || 'ethereum',
-      victimAddress: parsed?.address || '',
-      attackTxHash: txHash || undefined,
-      contractName: c.id,
-      sourceCode: undefined,
-      sourceAvailable: !!parsed,
-      expectedPatternIds: c.pattern_ids || [],
-      caseNote: c.note || '',
-    };
-  });
+  return POSITIVE_CASES;
 }
