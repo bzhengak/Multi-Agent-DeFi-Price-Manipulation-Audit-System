@@ -26,7 +26,7 @@ export function generatePocReport(results: PocEvalResult[], metrics: PocMetrics)
 
 ## 1. 评估方法
 
-系统对 18 个有 DeFiHackLabs 参考 PoC 的真实攻击案例进行审计，基于漏洞报告和攻击重建（T9）自动生成 Foundry PoC 测试代码，通过 \`forge test\` 运行验证。PoC 复现率 = 测试通过数 / 18。该指标不依赖人工标注的模式标签，是最客观的评估方式。
+系统对 ${metrics.totalCases} 个有 DeFiHackLabs 参考 PoC 的真实攻击案例进行审计，基于漏洞报告和攻击重建（T9）自动生成 Foundry PoC 测试代码，通过 \`forge test\` 运行验证。PoC 复现率 = 测试通过数 / ${metrics.totalCases}。该指标不依赖人工标注的模式标签，是最客观的评估方式。
 
 ## 2. 汇总结果
 
@@ -40,11 +40,10 @@ export function generatePocReport(results: PocEvalResult[], metrics: PocMetrics)
 
 ## 3. 详细结果
 
-| Case ID | 协议 | 链 | 生成 | 编译 | 复现 | 参考 PoC | 耗时 |
-|---------|------|-----|:---:|:---:|:---:|:---:|------|
+| Case ID | 链 | 生成 | 编译 | 复现 | 参考 PoC | 耗时 |
+|---------|-----|:---:|:---:|:---:|:---:|------|
 ${results.map(r => {
-    const protocol = r.generation.vulnerabilityReport?.summary?.contractName || r.caseId;
-    return `| ${r.caseId} | ${protocol} | ${r.generation.vulnerabilityReport ? '—' : '—'} | ${r.generation.generationSuccess ? '✅' : '❌'} | ${r.forgeTest.compiled ? '✅' : '❌'} | ${r.forgeTest.passed ? '✅' : '❌'} | ${r.referencePocResult?.passed ? '✅' : '❌'} | ${r.forgeTest.durationMs}ms |`;
+    return `| ${r.caseId} | ${r.blockchain || '—'} | ${r.generation.generationSuccess ? '✅' : '❌'} | ${r.forgeTest.compiled ? '✅' : '❌'} | ${r.forgeTest.passed ? '✅' : '❌'} | ${r.referencePocResult?.passed ? '✅' : '❌'} | ${r.forgeTest.durationMs}ms |`;
   }).join('\n')}
 
 ## 4. 分析

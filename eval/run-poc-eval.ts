@@ -178,6 +178,7 @@ async function main() {
       const isQuota = isQuotaError(generation.error || '');
       results.push({
         caseId: evalCase.caseId,
+        blockchain: evalCase.blockchain,
         generation,
         forgeTest: {
           caseId: evalCase.caseId,
@@ -216,6 +217,7 @@ async function main() {
 
     results.push({
       caseId: evalCase.caseId,
+      blockchain: evalCase.blockchain,
       generation,
       forgeTest,
       referencePocResult,

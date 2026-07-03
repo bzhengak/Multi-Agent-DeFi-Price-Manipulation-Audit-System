@@ -31,6 +31,7 @@ export interface ForgeTestResult {
 
 export interface PocEvalResult {
   caseId: string;
+  blockchain: string;
   generation: PocGenerationResult;
   forgeTest: ForgeTestResult;
   referencePocResult?: ForgeTestResult;
