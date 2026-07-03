@@ -52,7 +52,39 @@ function isQuotaError(error: string): boolean {
          msg.includes('billing') || msg.includes('payment');
 }
 
-function loadPocCases(): PocEvalCase[] {
+const CHAIN_RPC: Record<string, string> = {
+  ethereum: 'https://eth.llamarpc.com',
+  bsc: 'https://bsc-dataseed.binance.org',
+  arbitrum: 'https://arb1.arbitrum.io/rpc',
+  base: 'https://mainnet.base.org',
+  opbnb: 'https://opbnb.publicnode.com',
+  sei: 'https://evm-rpc.sei-apis.com',
+};
+
+async function fetchBlockNumber(txHash: string, blockchain: string): Promise<number | undefined> {
+  const rpc = CHAIN_RPC[blockchain] || CHAIN_RPC.ethereum;
+  try {
+    const response = await fetch(rpc, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'eth_getTransactionReceipt',
+        params: [txHash],
+      }),
+    });
+    const data = await response.json() as { result?: { blockNumber: string } };
+    if (data?.result?.blockNumber) {
+      return parseInt(data.result.blockNumber, 16);
+    }
+  } catch {
+    // Non-fatal: run without fork if block number can't be determined
+  }
+  return undefined;
+}
+
+async function loadPocCases(): Promise<PocEvalCase[]> {
   const historyPath = join(process.cwd(), 'data', 'history.json');
   const historyRaw = JSON.parse(readFileSync(historyPath, 'utf-8'));
   const cases = historyRaw.cases || historyRaw;
@@ -69,7 +101,7 @@ function loadPocCases(): PocEvalCase[] {
 
     const txHash = parseTxHash(c.attack_transaction || '');
 
-    pocCases.push({
+    const entry: PocEvalCase = {
       caseId: c.id,
       blockchain: parsed.blockchain,
       victimAddress: parsed.address,
@@ -77,7 +109,17 @@ function loadPocCases(): PocEvalCase[] {
       attackTxHash: txHash || undefined,
       referencePocUrl: pocInfo.url,
       referencePocFileName: pocInfo.fileName,
-    });
+    };
+
+    // Fetch block number for fork (non-blocking; failure is non-fatal)
+    if (txHash && CHAIN_RPC[parsed.blockchain]) {
+      const blockNumber = await fetchBlockNumber(txHash, parsed.blockchain);
+      if (blockNumber) {
+        entry.forkBlockNumber = blockNumber;
+      }
+    }
+
+    pocCases.push(entry);
   }
 
   return pocCases;
@@ -87,7 +129,7 @@ async function main() {
   console.log('=== PoC Reproduction Evaluation ===\n');
 
   // Load all cases
-  const allCases = loadPocCases();
+  const allCases = await loadPocCases();
   console.log(`Loaded ${allCases.length} cases with DeFiHackLabs PoC\n`);
 
   // Load checkpoint

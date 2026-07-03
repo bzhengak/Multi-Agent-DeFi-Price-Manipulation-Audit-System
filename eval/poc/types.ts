@@ -5,6 +5,7 @@ export interface PocEvalCase {
   contractName: string;
   sourceCode?: string;
   attackTxHash?: string;
+  forkBlockNumber?: number;
   referencePocUrl: string;
   referencePocFileName: string;
 }

@@ -9,7 +9,7 @@ const EXPLORER_TO_CHAIN: Record<string, string> = {
 };
 
 export function parseContractUrl(url: string): { blockchain: string; address: string } | null {
-  const match = url.match(/https?:\/\/(\w+)\.(?:com|io)\/address\/(0x[a-fA-F0-9]{40})/);
+  const match = url.match(/https?:\/\/(\w+)\.(?:com|io|org)\/address\/(0x[a-fA-F0-9]{40})/);
   if (match) {
     const explorer = match[1];
     const chain = EXPLORER_TO_CHAIN[explorer];

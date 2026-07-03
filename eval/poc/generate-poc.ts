@@ -1,3 +1,4 @@
+import { keccak256 } from 'js-sha3';
 import { AuditOrchestrator, type AuditResult } from '@/lib/agents/audit/orchestrator/audit-orchestrator';
 import { LLMClient } from '@/lib/agents/core/llm-client';
 import { fetchContractWithCache } from '@/lib/blockchain/fetcher';
@@ -13,11 +14,51 @@ const POC_GENERATION_PROMPT = `You are a DeFi exploit PoC generator. Based on th
 4. Use vm.deal(attacker, amount) if the attacker needs ETH
 5. Include assert or require statements to verify the attack succeeded (e.g., profit > 0, balance increased)
 6. If the attack requires a flash loan, simulate it with vm.deal (simplified, no need for actual Aave/Balancer integration)
-7. Do NOT use fork (the forge test runner will handle forking). Just write the test logic assuming the vulnerable contract is already deployed.
+7. The forge test runner forks mainnet at the attack block. You do NOT need to call vm.createFork(). Just write the test logic assuming the vulnerable contract is already deployed at its on-chain address.
 8. Keep the PoC concise (under 100 lines)
+9. Use EIP-55 checksummed addresses (e.g., "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B" not "0xab5801a7d398351b8be11c439e05c5b3259aec9b")
 
 ## Output
 Output ONLY the Solidity code, no markdown fences, no explanations.`;
+
+/**
+ * EIP-55 checksum an Ethereum address using keccak256 of the lowercase hex string.
+ */
+function toChecksumAddress(address: string): string {
+  const clean = address.toLowerCase().replace('0x', '');
+  if (clean.length !== 40) return address;
+  const hash = keccak256(clean);
+  let checksummed = '0x';
+  for (let i = 0; i < 40; i++) {
+    if (parseInt(hash[i], 16) >= 8) {
+      checksummed += clean[i].toUpperCase();
+    } else {
+      checksummed += clean[i];
+    }
+  }
+  return checksummed;
+}
+
+/**
+ * Post-process LLM-generated Solidity code to fix common issues:
+ * - EIP-55 checksum addresses
+ * - Remove markdown fences
+ */
+function cleanPocCode(raw: string): string {
+  let code = raw
+    .replace(/^```solidity\n?/m, '')
+    .replace(/^```\n?/m, '')
+    .replace(/```$/m, '')
+    .trim();
+
+  // Fix non-checksummed addresses: 0x followed by exactly 40 hex chars
+  code = code.replace(/0x[a-fA-F0-9]{40}/g, (match) => {
+    const checksummed = toChecksumAddress(match);
+    return checksummed;
+  });
+
+  return code;
+}
 
 export async function generatePoc(
   evalCase: PocEvalCase,
@@ -96,11 +137,7 @@ Generate a Foundry test contract that reproduces this attack.`;
 
     const pocCode = await llm.chat(POC_GENERATION_PROMPT, userPrompt);
 
-    const cleanedCode = pocCode
-      .replace(/^```solidity\n?/m, '')
-      .replace(/^```\n?/m, '')
-      .replace(/```$/m, '')
-      .trim();
+    const cleanedCode = cleanPocCode(pocCode);
 
     return {
       caseId: evalCase.caseId,

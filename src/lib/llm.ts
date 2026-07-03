@@ -24,9 +24,9 @@ import OpenAI from 'openai';
 const LLM_CONFIG = {
   model: process.env.LLM_MODEL || 'deepseek-chat',
   temperature: 0.1,
-  maxTokens: 8192,
+  maxTokens: 16384,
   topP: 0.9,
-  timeout: 120_000,
+  timeout: 180_000,
 };
 
 // ─── Provider type ───────────────────────────────────────────────────────────
@@ -143,6 +143,10 @@ export async function chatCompletion(
     }
     return content;
   } catch (error: unknown) {
+    const err = error as Record<string, unknown>;
+    const status = err.status ?? err.statusCode ?? 'unknown';
+    const msg = err.message ?? String(error);
+    console.error(`[LLM] chatCompletion error (status=${status}): ${typeof msg === 'string' ? msg.substring(0, 500) : String(error).substring(0, 500)}`);
     if (isQuotaError(error)) {
       throw new QuotaExceededError(
         `LLM quota exceeded: ${(error as Error).message}`,
@@ -236,7 +240,18 @@ export function parseJSONFromLLM<T>(response: string): T {
     }
   }
 
-  console.error('[LLM] Failed to parse JSON. Raw response (first 500 chars):', trimmed.substring(0, 500));
+  // Strategy 4: Extract from first { to end, fix truncated JSON
+  const jsonBlockLenient = extractJsonBlockLenient(trimmed);
+  if (jsonBlockLenient) {
+    try {
+      return JSON.parse(jsonBlockLenient) as T;
+    } catch {
+      // fall through
+    }
+  }
+
+  console.error('[LLM] Failed to parse JSON. Length:', trimmed.length, 'chars. Last 200 chars:', trimmed.slice(-200));
+  console.error('[LLM] Raw response (first 800 chars):', trimmed.substring(0, 800));
   throw new Error('LLM did not return valid JSON format');
 }
 
@@ -287,6 +302,75 @@ function extractJsonBlock(text: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * Extract a JSON object from truncated text by finding the first { and attempting to
+ * repair common truncation issues: unterminated strings, unescaped newlines in strings,
+ * and missing closing braces.
+ */
+function extractJsonBlockLenient(text: string): string | null {
+  const startIdx = text.search(/[\[{]/);
+  if (startIdx === -1) return null;
+
+  // Extract from the first bracket/brace to end of text
+  const raw = text.substring(startIdx);
+  const opener = raw[0];
+  const closer = opener === '{' ? '}' : ']';
+
+  // Try to fix common LLM JSON truncation issues:
+  let fixed = raw;
+
+  // Fix 1: Remove trailing incomplete string (ends with " but not followed by , or } or ])
+  fixed = fixed.replace(/:\s*"[^"]*$/, ': ""');
+
+  // Fix 2: Escape unescaped newlines inside strings
+  let inStr = false;
+  let escaped = false;
+  const chars: string[] = [];
+  for (let i = 0; i < fixed.length; i++) {
+    const ch = fixed[i];
+    if (escaped) { escaped = false; chars.push(ch); continue; }
+    if (ch === '\\' && inStr) { escaped = true; chars.push(ch); continue; }
+    if (ch === '"' && !escaped) { inStr = !inStr; chars.push(ch); continue; }
+    if (inStr && (ch === '\n' || ch === '\r')) {
+      chars.push('\\n');
+      continue;
+    }
+    chars.push(ch);
+  }
+  fixed = chars.join('');
+
+  // Fix 3: Count depth and add missing closing braces/brackets
+  let depth = 0;
+  inStr = false;
+  escaped = false;
+  for (let i = 0; i < fixed.length; i++) {
+    const ch = fixed[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inStr) { escaped = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{' || ch === '[') depth++;
+    if (ch === '}' || ch === ']') depth--;
+  }
+
+  // Only attempt to fix if we have unclosed braces (truncated)
+  if (depth > 0) {
+    for (let i = 0; i < depth; i++) {
+      fixed += closer;
+    }
+  }
+
+  // Fix 4: Ensure proper JSON ending (no trailing comma before last brace)
+  fixed = fixed.replace(/,(\s*[}\]])/g, '$1');
+
+  try {
+    JSON.parse(fixed);
+    return fixed;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Structured Output (T5) ──────────────────────────────────────────────────
@@ -425,5 +509,12 @@ async function getStructuredJSONViaSchema<T>(
     throw new Error('LLM returned empty response with json_schema mode');
   }
 
-  return JSON.parse(content) as T;
+  // The response should be valid JSON per schema, but handle markdown fences
+  // in case the API ignores response_format and returns text with fences.
+  try {
+    return JSON.parse(content) as T;
+  } catch {
+    // Use our robust parser (handles fences, truncation, etc.)
+    return parseJSONFromLLM<T>(content);
+  }
 }

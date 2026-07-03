@@ -1,0 +1,20 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc = "0.8.26"
+rpc_timeout = "120s"
+rpc_retries = 8
+
+[rpc_endpoints]
+ethereum = "https://eth.llamarpc.com"
+mainnet = "https://eth.llamarpc.com"
+bsc = "https://bsc-dataseed1.binance.org"
+arbitrum = "https://arb1.arbitrum.io/rpc"
+base = "https://mainnet.base.org"
+opbnb = "https://opbnb.publicnode.com"
+sei = "https://evm-rpc.sei-apis.com"
+optimism = "https://mainnet.optimism.io"
+polygon = "https://polygon-rpc.com"
+avalanche = "https://api.avax.network/ext/bc/C/rpc"
+fantom = "https://rpc.ftm.tools"

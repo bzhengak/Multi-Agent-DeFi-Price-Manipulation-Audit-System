@@ -40,11 +40,11 @@ const DEFAULT_STAGE_BUDGETS: Record<StageName, number> = {
   protocol_detection: 5_000,
   context_building: 10_000,
   cross_contract_tracing: 30_000,
-  vulnerability_analysis: 600_000,
+  vulnerability_analysis: 900_000,
   attack_reconstruction: 60_000,
   cost_estimation: 15_000,
   confidence_calibration: 5_000,
-  report_generation: 60_000,
+  report_generation: 180_000,
 };
 
 export class StageTimeoutError extends Error {
