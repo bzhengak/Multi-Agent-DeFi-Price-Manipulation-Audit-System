@@ -6,9 +6,11 @@ import { loadPositiveCases } from './dataset/positives';
 import { loadNegativeCases } from './dataset/negatives';
 import type { EvalCase, EvalResult } from './types';
 import { spawn } from 'child_process';
-import { writeFileSync, mkdtempSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync, mkdtempSync } from 'fs';
+import { join, dirname } from 'path';
 import { tmpdir } from 'os';
+
+const BASELINE_CACHE_PATH = join(__dirname, 'results', 'baseline-results.json');
 
 // === Raw LLM Baseline ===
 async function runRawLlm(evalCase: EvalCase): Promise<EvalResult> {
@@ -127,10 +129,17 @@ async function runSlither(evalCase: EvalCase): Promise<EvalResult> {
   }
 }
 
-export async function runAllBaselines(): Promise<{
+export async function runAllBaselines(useCache = true): Promise<{
   rawLlm: { positives: EvalResult[]; negatives: EvalResult[] };
   slither: { positives: EvalResult[]; negatives: EvalResult[] };
 }> {
+  if (useCache && existsSync(BASELINE_CACHE_PATH)) {
+    console.log('=== Loading cached baselines ===');
+    const cached = JSON.parse(readFileSync(BASELINE_CACHE_PATH, 'utf-8'));
+    console.log('  Cached baselines loaded.');
+    return cached;
+  }
+
   const positiveCases = loadPositiveCases();
   const negativeCases = loadNegativeCases();
 
@@ -160,8 +169,16 @@ export async function runAllBaselines(): Promise<{
     slitherNegatives.push(r);
   }
 
-  return {
+  const result = {
     rawLlm: { positives: rawLlmPositives, negatives: rawLlmNegatives },
     slither: { positives: slitherPositives, negatives: slitherNegatives },
   };
+
+  mkdirSync(dirname(BASELINE_CACHE_PATH), { recursive: true });
+  const tmp = BASELINE_CACHE_PATH + '.tmp';
+  writeFileSync(tmp, JSON.stringify(result, null, 2), 'utf-8');
+  renameSync(tmp, BASELINE_CACHE_PATH);
+  console.log('  Baselines cached to baseline-results.json');
+
+  return result;
 }

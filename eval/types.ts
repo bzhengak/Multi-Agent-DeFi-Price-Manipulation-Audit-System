@@ -51,4 +51,24 @@ export interface MetricsResult {
   }>;
   negativeFpRate: { value: number; ci: [number, number]; fpCount: number; totalContracts: number };
   overallPrecision: { value: number; ci: [number, number]; tp: number; fp: number };
+  safeContractPrecision: { value: number; ci: [number, number]; fpCount: number; totalContracts: number };
+  calibratedPrecision: {
+    value: number;
+    lowerBound: number;
+    hallucinationRate: number;
+    adjustedFp: number;
+    tp: number;
+    rawFp: number;
+  };
+  detectionDiscrimination: {
+    meanVulnerable: number;
+    meanSafe: number;
+    ratio: number;
+  };
+  fpCategorization: {
+    universal: { patterns: Record<string, number>; total: number };
+    protocolSpecific: { patterns: Record<string, number>; total: number };
+    questionable: { patterns: Record<string, number>; total: number };
+    total: number;
+  };
 }

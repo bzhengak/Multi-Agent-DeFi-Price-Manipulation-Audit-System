@@ -10,6 +10,7 @@
     "ingest:patterns": "tsx scripts/ingest-patterns.ts data/vulnerabilities.json",
     "regenerate:patterns": "tsx scripts/regenerate-patterns-json.ts",
     "eval": "bun run eval/run-eval.ts",
+    "eval:report": "bun run eval/regenerate-report.ts",
     "eval:agent": "bun run eval/run-agent.ts",
     "eval:baselines": "bun run eval/run-baselines.ts",
     "eval:poc": "bun run eval/run-poc-eval.ts",
