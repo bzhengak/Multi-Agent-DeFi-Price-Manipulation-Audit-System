@@ -9,17 +9,16 @@ const POC_GENERATION_PROMPT = `You are a DeFi exploit PoC generator. Based on th
 
 ## Requirements
 1. Use Foundry test framework: import "forge-std/Test.sol"
-2. The test contract should inherit from Test
-3. Use vm.startPrank(attacker) / vm.stopPrank() to simulate the attacker
-4. Use vm.deal(attacker, amount) if the attacker needs ETH
-5. Include assert or require statements to verify the attack succeeded (e.g., profit > 0, balance increased)
-6. If the attack requires a flash loan, simulate it with vm.deal (simplified, no need for actual Aave/Balancer integration)
-7. The forge test runner forks mainnet at the attack block. You do NOT need to call vm.createFork(). Just write the test logic assuming the vulnerable contract is already deployed at its on-chain address.
-8. Keep the PoC concise (under 100 lines)
-9. Use EIP-55 checksummed addresses (e.g., "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B" not "0xab5801a7d398351b8be11c439e05c5b3259aec9b")
+2. Your test contract MUST be named "ExploitTest" and inherit from Test
+3. Include a setUp() function that calls vm.createSelectFork() with the chain alias and fork block number (if provided)
+4. Use vm.startPrank(attacker) / vm.stopPrank() to simulate the attacker
+5. Use vm.deal(attacker, amount) if the attacker needs ETH or native tokens (no external flash loan protocol needed)
+6. Include assert or require statements to verify the attack succeeded (e.g., profit > 0, balance increased)
+7. Keep the PoC concise (under 100 lines)
+8. Use EIP-55 checksummed addresses (e.g., "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B" not "0xab5801a7d398351b8be11c439e05c5b3259aec9b")
 
 ## Output
-Output ONLY the Solidity code, no markdown fences, no explanations.`;
+Output ONLY the Solidity code, no markdown fences, no explanations. Use SPDX license identifier and pragma solidity ^0.8.0.`;
 
 /**
  * EIP-55 checksum an Ethereum address using keccak256 of the lowercase hex string.
@@ -107,33 +106,47 @@ export async function generatePoc(
     const vulnReport = fullResult.analysisResult;
     const attackRecon = fullResult.reconstruction;
 
-    const llm = new LLMClient({ maxRetries: 2, temperature: 0.2, maxTokens: 4096 });
+    const llm = new LLMClient({ maxRetries: 2, temperature: 0.2, maxTokens: 4096, provider: 'medium' });
+
+    const blockchain = evalCase.blockchain;
+    const forkClause = evalCase.forkBlockNumber
+      ? `\`\`\`solidity\nvm.createSelectFork("${blockchain}", ${evalCase.forkBlockNumber});\n\`\`\``
+      : `\`\`\`solidity\nvm.createSelectFork("${blockchain}");\n\`\`\``;
+
+    const vulnDetails = vulnReport.vulnerabilities.map((v: any) =>
+`[${v.patternId}] ${v.location.functionName} (lines ${v.location.lineStart}-${v.location.lineEnd}):
+  Description: ${v.description}
+  Attack vector: ${v.attackVector}
+
+  Vulnerable code snippet:
+  \`\`\`solidity
+  ${v.location.codeSnippet}
+  \`\`\``
+    ).join('\n\n');
+
+    const attackSteps = attackRecon.attacks.map((a: any) =>
+      `- ${a.attackType}: ${a.steps.map((s: any) => `[${s.phase}] ${s.action}`).join('\n    ')}`
+    ).join('\n');
 
     const userPrompt = `## Contract: ${evalCase.contractName}
-## Blockchain: ${evalCase.blockchain}
+## Blockchain: ${blockchain}
 ## Contract Address: ${evalCase.victimAddress}
 
-## Vulnerability Analysis
-${JSON.stringify(vulnReport.vulnerabilities.map((v: any) => ({
-  patternId: v.patternId,
-  title: v.title,
-  description: v.description,
-  attackVector: v.attackVector,
-  location: v.location,
-})), null, 2)}
+## Fork Setup (use in setUp()):
+${forkClause}
 
-## Attack Reconstruction
-${JSON.stringify(attackRecon.attacks.map((a: any) => ({
-  type: a.attackType,
-  name: a.attackName,
-  steps: a.steps.map((s: any) => `[${s.phase}] ${s.action}`),
-  fundFlow: a.fundFlow,
-})), null, 2)}
+## Vulnerable Functions & Attack Details
+${vulnDetails}
 
-## Contract Source Code (first 200 lines)
-${fetchResult.sourceCode.split('\n').slice(0, 200).join('\n')}
+## Attack Reconstruction Steps
+${attackSteps}
 
-Generate a Foundry test contract that reproduces this attack.`;
+## Full Source Code
+\`\`\`solidity
+${fetchResult.sourceCode}
+\`\`\`
+
+Generate a Foundry test contract named "ExploitTest" that reproduces this attack.`;
 
     const pocCode = await llm.chat(POC_GENERATION_PROMPT, userPrompt);
 

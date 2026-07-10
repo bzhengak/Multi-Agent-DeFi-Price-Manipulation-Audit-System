@@ -96,3 +96,11 @@ push-via-api.py
 # OpenCode 运行时数据
 .opencode/session*
 
+# ============================================
+# Foundry build artifacts (runtime generated)
+# ============================================
+eval/poc/foundry-workspace/cache/
+eval/poc/foundry-workspace/out/
+eval/poc/foundry-workspace/test/*.t.sol
+eval/poc/foundry-workspace/src/CASE-*.sol
+

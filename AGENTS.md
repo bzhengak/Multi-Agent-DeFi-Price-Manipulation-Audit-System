@@ -1,6 +1,6 @@
 # DeFi Price Manipulation Analyzer — Agent 系统升级指南
 
-> 版本: v3.7.0 | 最后更新: 2026-07-02
+> 版本: v3.8.0 | 最后更新: 2026-07-05
 > 本文件是 opencode 中 DeepSeek V4 Pro 模型的项目级指令文件，指导 AI 代理在 Workflow→Agent 架构升级开发中遵循统一的技术规范、架构约束和工作流程。
 
 ---
@@ -343,6 +343,7 @@ curl -X POST http://localhost:3000/api/init
 - Agent 升级详细技术规格：`@docs/agent-upgrade-spec.md`
 - 价格操纵攻击类型体系：`@docs/price-manipulation-patterns.md`
 - 协议类型识别映射：`@docs/protocol-classification-mapping.md`
+- **评估样本 Label 确定方法论**：`@eval/LABEL_METHODOLOGY.md` — Ground truth 四层体系 + Pattern 匹配协议 + 扩展/新增原则
 - 专家评审报告（14 tasks + H1 完整评估）：`@final.md`
 - 实施手册（任务清单与验收标准）：`@execution-plan.md`
 

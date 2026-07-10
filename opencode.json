@@ -51,6 +51,11 @@
       "enabled": true
     }
     ,
+    "koon-fetch": {
+      "type": "local",
+      "command": ["npx", "-y", "koon-mcp"],
+      "enabled": true
+    },
     "github": {
       "type": "local",
       "command": ["npx", "-y", "@modelcontextprotocol/server-github"],

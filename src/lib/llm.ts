@@ -2,19 +2,25 @@
 // LLM Module — OpenAI-compatible API (Dual Provider)
 // ============================================
 // Uses OpenAI SDK to connect to any OpenAI-compatible endpoint.
-// Supports two providers:
-//   - Primary: GLM 5.2 via ZhipuAI (complex tasks: vulnerability analysis, protocol detection)
+// Supports three providers:
+//   - Primary: GLM 5.2 via ZhipuAI (deep reasoning: vulnerability analysis, protocol detection)
+//   - Medium: DeepSeek V4 Pro via DeepSeek (moderate reasoning: PoC generation, context fallback)
 //   - Fast: DeepSeek V4 Flash via DeepSeek (simple tasks: report gen, summary)
 //
 // Required env vars (primary):
 //   OPENAI_API_KEY    — Primary API key (GLM 5.2)
 //   OPENAI_BASE_URL   — Primary API endpoint
-//   LLM_MODEL         — Primary model name (default: glm-5.2)
+//   LLM_MODEL         — Primary model name (default: deepseek-chat)
+//
+// Optional env vars (medium provider):
+//   OPENAI_API_KEY_MEDIUM   — Medium API key (DeepSeek V4 Pro)
+//   OPENAI_BASE_URL_MEDIUM  — Medium API endpoint (default: https://api.deepseek.com)
+//   LLM_MODEL_MEDIUM        — Medium model name (default: deepseek-v4-pro)
 //
 // Optional env vars (fast provider):
 //   OPENAI_API_KEY_FAST   — Fast API key (DeepSeek V4 Flash)
 //   OPENAI_BASE_URL_FAST  — Fast API endpoint (default: https://api.deepseek.com)
-//   LLM_MODEL_FAST        — Fast model name (default: deepseek-chat)
+//   LLM_MODEL_FAST        — Fast model name (default: deepseek-v4-flash)
 // ============================================
 
 import OpenAI from 'openai';
@@ -24,18 +30,19 @@ import OpenAI from 'openai';
 const LLM_CONFIG = {
   model: process.env.LLM_MODEL || 'deepseek-chat',
   temperature: 0.1,
-  maxTokens: 16384,
+  maxTokens: 65536,
   topP: 0.9,
   timeout: 180_000,
 };
 
 // ─── Provider type ───────────────────────────────────────────────────────────
 
-export type LLMProvider = 'primary' | 'fast';
+export type LLMProvider = 'primary' | 'medium' | 'fast';
 
 // ─── Singleton OpenAI clients ────────────────────────────────────────────────
 
 let primaryClient: OpenAI | null = null;
+let mediumClient: OpenAI | null = null;
 let fastClient: OpenAI | null = null;
 
 function getPrimaryClient(): OpenAI {
@@ -58,6 +65,22 @@ function getPrimaryClient(): OpenAI {
   return primaryClient;
 }
 
+function getMediumClient(): OpenAI | null {
+  const apiKey = process.env.OPENAI_API_KEY_MEDIUM;
+  if (!apiKey) return null;
+  if (!mediumClient) {
+    mediumClient = new OpenAI({
+      apiKey,
+      baseURL: process.env.OPENAI_BASE_URL_MEDIUM || 'https://api.deepseek.com',
+      timeout: LLM_CONFIG.timeout,
+    });
+    console.log(
+      `[LLM] Medium provider: ${mediumClient.baseURL} model=${process.env.LLM_MODEL_MEDIUM || 'deepseek-v4-pro'}`,
+    );
+  }
+  return mediumClient;
+}
+
 function getFastClient(): OpenAI | null {
   const apiKey = process.env.OPENAI_API_KEY_FAST;
   if (!apiKey) return null;
@@ -75,6 +98,11 @@ function getFastClient(): OpenAI | null {
 }
 
 function getClient(provider?: LLMProvider): OpenAI {
+  if (provider === 'medium') {
+    const medium = getMediumClient();
+    if (medium) return medium;
+    console.warn('[LLM] Medium provider not configured, falling back to primary');
+  }
   if (provider === 'fast') {
     const fast = getFastClient();
     if (fast) return fast;
@@ -84,6 +112,9 @@ function getClient(provider?: LLMProvider): OpenAI {
 }
 
 function getModelForProvider(provider?: LLMProvider): string {
+  if (provider === 'medium') {
+    return process.env.LLM_MODEL_MEDIUM || 'deepseek-v4-pro';
+  }
   if (provider === 'fast') {
     return process.env.LLM_MODEL_FAST || 'deepseek-chat';
   }
@@ -126,7 +157,7 @@ export async function chatCompletion(
   const model = provider ? getModelForProvider(provider) : config.model;
 
   try {
-    const completion = await openai.chat.completions.create({
+    const params: Record<string, unknown> = {
       model,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -135,7 +166,11 @@ export async function chatCompletion(
       temperature: config.temperature,
       max_tokens: config.maxTokens,
       top_p: config.topP,
-    });
+    };
+    if (model?.includes('deepseek')) {
+      (params as any).thinking = { type: 'disabled' };
+    }
+    const completion = await openai.chat.completions.create(params as any);
 
     const content = completion.choices?.[0]?.message?.content;
     if (!content) {
@@ -217,7 +252,12 @@ export function parseJSONFromLLM<T>(response: string): T {
   try {
     return JSON.parse(trimmed) as T;
   } catch {
-    // fall through
+    // Try sanitizing (fix literal newlines/tabs inside JSON strings)
+    try {
+      return JSON.parse(sanitizeJsonLiterals(trimmed)) as T;
+    } catch {
+      // fall through
+    }
   }
 
   // Strategy 2: Strip markdown code fences
@@ -226,7 +266,11 @@ export function parseJSONFromLLM<T>(response: string): T {
     try {
       return JSON.parse(fenceMatch[1].trim()) as T;
     } catch {
-      // fall through
+      try {
+        return JSON.parse(sanitizeJsonLiterals(fenceMatch[1].trim())) as T;
+      } catch {
+        // fall through
+      }
     }
   }
 
@@ -236,7 +280,11 @@ export function parseJSONFromLLM<T>(response: string): T {
     try {
       return JSON.parse(jsonBlock) as T;
     } catch {
-      // fall through
+      try {
+        return JSON.parse(sanitizeJsonLiterals(jsonBlock)) as T;
+      } catch {
+        // fall through
+      }
     }
   }
 
@@ -321,8 +369,20 @@ function extractJsonBlockLenient(text: string): string | null {
   // Try to fix common LLM JSON truncation issues:
   let fixed = raw;
 
-  // Fix 1: Remove trailing incomplete string (ends with " but not followed by , or } or ])
-  fixed = fixed.replace(/:\s*"[^"]*$/, ': ""');
+  // Fix 1: Remove trailing incomplete string (handles \" inside)
+  // Match from last '"'key":' through '"' that may contain escaped quotes
+  const lastQuotePattern = /:\s*"((?:[^"\\]|\\.)*)"/g;
+  let lastCompleteIdx = -1;
+  let m: RegExpExecArray | null;
+  while ((m = lastQuotePattern.exec(fixed)) !== null) {
+    lastCompleteIdx = m.index + m[0].length;
+  }
+  // If there's an unclosed string after the last complete key:value, truncate it
+  const afterLast = fixed.substring(lastCompleteIdx > 0 ? lastCompleteIdx : 0);
+  const unclosedMatch = afterLast.match(/:\s*"/);
+  if (unclosedMatch) {
+    fixed = fixed.substring(0, lastCompleteIdx > 0 ? lastCompleteIdx : 0) + afterLast.substring(0, unclosedMatch.index) + ': ""';
+  }
 
   // Fix 2: Escape unescaped newlines inside strings
   let inStr = false;
@@ -440,7 +500,7 @@ async function getStructuredJSONViaTool<T>(
 ): Promise<T> {
   const openai = getClient();
 
-  const completion = await openai.chat.completions.create({
+  const toolParams: Record<string, unknown> = {
     model: config.model,
     messages: [
       { role: 'system', content: systemPrompt },
@@ -460,7 +520,12 @@ async function getStructuredJSONViaTool<T>(
       },
     ],
     tool_choice: { type: 'function', function: { name: 'emit' } },
-  });
+  };
+  // DeepSeek API: thinking is a top-level body parameter (not via extra_body)
+  if (config.model?.includes('deepseek')) {
+    (toolParams as any).thinking = { type: 'disabled' };
+  }
+  const completion = await openai.chat.completions.create(toolParams as any);
 
   const toolCall = completion.choices?.[0]?.message?.tool_calls?.[0];
   if (!toolCall) {
@@ -471,7 +536,52 @@ async function getStructuredJSONViaTool<T>(
     throw new Error('LLM tool call has no function arguments');
   }
 
-  return JSON.parse(args) as T;
+  try {
+    return JSON.parse(args) as T;
+  } catch {
+    // GLM 5.2 may return literal newlines in function arguments
+    try {
+      return JSON.parse(sanitizeJsonLiterals(args)) as T;
+    } catch {
+      throw new Error('LLM tool call arguments contain unparseable JSON');
+    }
+  }
+}
+
+/**
+ * Escape literal control characters inside JSON string values.
+ * GLM 5.2 often returns literal newlines/tabs in JSON strings instead of escaping them.
+ */
+function sanitizeJsonLiterals(json: string): string {
+  const chars: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (escaped) {
+      escaped = false;
+      chars.push(ch);
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      chars.push(ch);
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      chars.push(ch);
+      continue;
+    }
+    if (inString) {
+      if (ch === '\n') { chars.push('\\', 'n'); continue; }
+      if (ch === '\r') { chars.push('\\', 'r'); continue; }
+      if (ch === '\t') { chars.push('\\', 't'); continue; }
+    }
+    chars.push(ch);
+  }
+  return chars.join('');
 }
 
 /**
@@ -485,7 +595,7 @@ async function getStructuredJSONViaSchema<T>(
 ): Promise<T> {
   const openai = getClient();
 
-  const completion = await openai.chat.completions.create({
+  const schemaParams: Record<string, unknown> = {
     model: config.model,
     messages: [
       { role: 'system', content: systemPrompt },
@@ -502,7 +612,11 @@ async function getStructuredJSONViaSchema<T>(
         strict: false,
       },
     } as never,
-  });
+  };
+  if (config.model?.includes('deepseek')) {
+    (schemaParams as any).thinking = { type: 'disabled' };
+  }
+  const completion = await openai.chat.completions.create(schemaParams as any);
 
   const content = completion.choices?.[0]?.message?.content;
   if (!content) {
@@ -514,7 +628,11 @@ async function getStructuredJSONViaSchema<T>(
   try {
     return JSON.parse(content) as T;
   } catch {
-    // Use our robust parser (handles fences, truncation, etc.)
-    return parseJSONFromLLM<T>(content);
+    try {
+      return JSON.parse(sanitizeJsonLiterals(content)) as T;
+    } catch {
+      // Use our robust parser (handles fences, truncation, etc.)
+      return parseJSONFromLLM<T>(content);
+    }
   }
 }

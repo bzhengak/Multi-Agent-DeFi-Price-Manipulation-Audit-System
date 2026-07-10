@@ -40,7 +40,7 @@ const DEFAULT_STAGE_BUDGETS: Record<StageName, number> = {
   protocol_detection: 5_000,
   context_building: 10_000,
   cross_contract_tracing: 30_000,
-  vulnerability_analysis: 1_000_000,
+  vulnerability_analysis: 2400000,
   attack_reconstruction: 60_000,
   cost_estimation: 15_000,
   confidence_calibration: 5_000,
@@ -100,7 +100,7 @@ export class AuditOrchestrator {
 
   constructor(
     onProgress?: ProgressCallback,
-    totalTimeout: number = 1000000,
+    totalTimeout: number = 3600000,
     stageBudgets?: Partial<Record<StageName, number>>,
   ) {
     this.detector = new ProtocolTypeDetector();
