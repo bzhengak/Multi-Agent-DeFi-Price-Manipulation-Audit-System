@@ -1,0 +1,184 @@
+\documentclass[10pt]{article}
+\usepackage[left=1.8cm, right=1.8cm, top=1.1cm, bottom=1.3cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{xltabular}
+\setlength{\parskip}{0pt}        
+\usepackage{titlesec}
+\makeatletter
+\def\@maketitle{%
+  \newpage
+  \null
+  \vskip -1cm      % 调整标题上方距离
+  \begin{center}%
+  \let \footnote \thanks
+    {\LARGE \@title \par}%
+    \vskip 0.5em    % 标题与作者之间的间距
+    {\large \@author \par}%
+    \vskip 0.5em    % 作者与日期之间的间距
+    {\large \@date}%
+  \end{center}%
+  \par
+  \vskip 0.5em      % 标题整体下方的间距
+}
+\makeatother
+\titlespacing{\title}
+{0pt}            % 左缩进，一般设为0
+{0ex plus .5ex minus .2ex}  % 标题前的垂直间距
+{0ex plus .2ex}            % 标题后的垂直间距
+\titlespacing{\author}
+{0pt}            % 左缩进，一般设为0
+{0ex plus .5ex minus .2ex}  % 标题前的垂直间距
+{0ex plus .2ex}            % 标题后的垂直间距
+% 调整 section 前后的间距
+\titlespacing{\section}
+{0pt}            % 左缩进，一般设为0
+{1ex plus .5ex minus .2ex}  % 标题前的垂直间距
+{0.8ex plus .2ex}            % 标题后的垂直间距
+
+% 调整 subsection 间距
+\titlespacing{\subsection}
+{0pt}
+{0.75ex plus .5ex minus .2ex}
+{0.55ex plus .2ex}
+
+% 调整 subsubsection 间距（如果你用到了）
+\titlespacing{\subsubsection}
+{0pt}
+{0.75ex plus .5ex minus .2ex}
+{0.55ex plus .2ex}
+
+% Compact lists
+\setlist{nosep,leftmargin=*}
+
+\title{Multi-Agent DeFi Price Manipulation Audit System\\ Interim Report}
+\author{ZHENG Bowen (Student ID: 21286853)}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Background}
+DeFi protocols suffer heavy losses from price manipulation attacks that exploit misplaced trust in price feeds, transient AMM reserves, or privilege flaws.And the proportion of cross‑protocol composite attacks has risen significantly. In current auditing practices, AI is already capable of handling repetitive detection tasks. However, in scenarios such as price manipulation that involve economic models and composite attacks, deep analysis still heavily relies on human experts, creating a significant efficiency bottleneck. 
+
+\section{Motivation}
+Multi‑Agent collaborative systems offer a promising way to overcome this limitation. They decompose the auditing workflow into specialized steps such as protocol identification, context construction, vulnerability pattern matching, and attack path reconstruction. Through memory sharing and iterative verification, the Agents advance the process collaboratively, extending automation from surface‑level feature detection to deeper vulnerability reasoning.
+
+\section{Technical Approach}
+
+Based on these objectives, the system adopts a layered architecture: a pipeline coordinated by an audit orchestrator and composed of six specialized Agents. Each Agent shares tools, memory, and a knowledge base, and the overall process follows a cognitive loop of “observe—think—act—update.”
+% --- Architecture diagram placeholder ---
+\begin{figure}[H]
+    \centering
+    \fbox{%
+        \includegraphics[width=0.85\textwidth]{mid01.drawio.png} 
+    }
+    \caption{System architecture overview.}
+    \label{fig:arch}
+\end{figure}
+
+\subsection{Audit Orchestrator and Agent Pipeline}
+The orchestrator starts the agents in sequence and can dynamically increase reasoning rounds when the severity of early findings demands it.
+
+\subsubsection*{Stage 1 -- Protocol Identification}
+Analyze the contract’s functions, interfaces, and state variables, and classify it into one of eight DeFi protocol categories: DEX/AMM, lending, perpetuals, yield aggregator, cross-chain bridge, stablecoin, options protocol, or liquid staking. This step determines which vulnerability pattern set and predefined protocol-specific attributes should be loaded for subsequent analysis.
+
+\subsubsection*{Stage 2 -- Context Building}
+Retrieves relevant vulnerability-pattern templates and similar historical cases from memory, then assembles them into structured instructions for the next stage.
+
+\subsubsection*{Stage 3 -- Deep Vulnerability Analysis (Core)}
+The agent scans the contract function by function and compares the code against vulnerability patterns provided in the context. Whenever a match is identified, it records the corresponding pattern ID, code location, and matching rationale as supporting evidence. The analysis is performed iteratively. After each round, the system checks whether all high-priority vulnerability patterns for the current protocol type have been covered, and whether the exposure points defined in the risk profile (e.g., flash-loan dependency or oracle dependency) have corresponding findings. If uncovered gaps remain and the iteration limit has not been reached, a new analysis round is triggered automatically. Otherwise, the process terminates and outputs the complete vulnerability findings list to Stage 4.
+
+\subsubsection*{Stage 4 -- Attack Reconstruction}
+Based on all detected vulnerability combinations, the agent generates a narrative that chains the flaws into a concrete attack path (e.g., flash loan distorts spot price, which triggers under-collateralized liquidation).
+
+\subsubsection*{Stage 5 -- Confidence Calibration}
+In implementation, confidence calibration combines five dimensions: source code availability, pattern-matching priority, historical case support, cross-round consistency, and economic feasibility. Each dimension is scored according to predefined rules and aggregated through weighted calculation, followed by an adjustment factor based on the iteration round. Risk severity directly inherits the severity level defined by the vulnerability pattern itself (Critical/High/Medium/Low). 
+
+\subsubsection*{Stage 6 -- Report Generation}
+Stage 6 consolidates all prior analysis results into a structured audit report. For every vulnerability, the report consistently includes: vulnerability name and category, severity level, exact code location with evidence snippets, attack path and narrative, and a PoC code example. The report also includes three compliance-related components: attack cost estimation, where the LLM infers a rough cost range based on required flash-loan scale and transaction complexity; remediation timeline recommendations, where Critical issues should be fixed within 24 hours, High within 7 days, and Medium or below handled in routine iterations; and knowledge traceability, where each finding is mapped to corresponding SWC IDs, OWASP categories, and related CVE examples.
+
+\subsection{Shared Services and Knowledge Layer}
+All agents access shared services through the \texttt{BaseAgent} interface:
+\begin{itemize}
+    \item \textbf{ToolRegistry} : wraps Etherscan-like APIs for source code and on-chain reserve queries.
+    \item \textbf{MemorySystem} : a three-layer memory: \textit{working} (intermediate evidence), \textit{episodic} (full audit traces), and \textit{semantic} (reusable DeFi knowledge and patterns).
+    \item \textbf{LLMClient \& PromptOptimizer} : unified LLM interface; PromptOptimizer builds constrained prompts that force evidence-matching with a mandatory JSON output, avoiding open-ended discussion.
+    \item \textbf{Vulnerability Pattern DB} : 21 patterns across 6 categories, each defined by detectable code features.
+\end{itemize}
+
+\subsection{Vulnerability Pattern Classification Framework}
+The system uses a root-cause taxonomy with six mutually exclusive categories; patterns within them can be composed. Table~\ref{tab:patterns} lists every pattern.
+
+\begin{xltabular}{\textwidth}{
+  >{\raggedright\arraybackslash}p{2.1cm}
+  >{\raggedright\arraybackslash}p{1.1cm}
+  >{\raggedright\arraybackslash}p{4.7cm}
+  >{\raggedright\arraybackslash}X
+}
+\caption{Vulnerability patterns}\label{tab:patterns}\\
+\toprule
+Category & Pattern ID & Pattern Name & Key Code Feature \\
+\midrule
+\endfirsthead
+\caption{Vulnerability patterns (continued)}\\
+\toprule
+Category & Pattern ID & Pattern Name & Key Code Feature \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\bottomrule
+\endlastfoot
+\multirow{5}{=}{Oracle Dependency} & OD-01 & Direct Spot Price Pricing & Price calculation uses \texttt{getReserves()} return without time weighting. \\
+& OD-02 & Short-Window / Manipulatable TWAP & TWAP window too short; easily distorted. \\
+& OD-03 & Centralized / Unverified Feed & Single off-chain API or unfiltered aggregator; admin can update. \\
+& OD-04 & Oracle Data Freshness Not Verified & Missing check on \texttt{updatedAt} or \texttt{roundId}. \\
+& OD-05 & Missing Oracle Liveness Tolerance & No heartbeat check; tolerates prolonged stagnation. \\
+\midrule
+\multirow{3}{=}{Liquidity \& Reserve Manipulability} & LR-01 & Mint/Burn Dependent on Instant. Reserves & Share calculation uses raw \texttt{reserve0/reserve1} without slippage protection. \\
+& LR-02 & Collateral Ratio Not Verifying Price Trust & Lending/liquidation relies on a manipulatable price source. \\
+& LR-03 & TVL/Volume-Driven Reward Distribution & Rewards or fees depend on instantly alterable TVL. \\
+\midrule
+\multirow{3}{=}{Transaction Ordering \& Timing} & TO-01 & Missing Deadline/Protection Window & No deadline or protection window for time-sensitive operations. \\
+& TO-02 & No Slippage Protection & \texttt{amountOutMin=0} or no enforced max slippage. \\
+& TO-03 & Reentrancy-Based Price Manipulation & Price updated after an external call without reentrancy lock. \\
+\midrule
+\multirow{3}{=}{Access Control \& Privilege Risks} & AC-01 & Oracle Address Unilaterally Updatable & Privileged function lacks timelock or multi-sig. \\
+& AC-02 & Privileged Adjustment of Econ. Parameters & Fees, collateral ratios adjustable without constraints. \\
+& AC-03 & Mint/Burn Authority Concentrated & Unlimited mint/burn can affect price. \\
+\midrule
+\multirow{3}{=}{Calculation Logic Bugs} & CL-01 & Exploitable Rounding Direction & Division/modulo remainder repeatedly extractable. \\
+& CL-02 & Decimal Mismatch & Tokens with different decimals used without normalization. \\
+& CL-03 & Inappropriate AMM Curve/Parameters & Custom curve or extreme volumes unprotected; price deviation. \\
+\midrule
+\multirow{4}{=}{Composability Risks} & CR-01 & Reliance on External Protocol as Sole Price Source & Core logic directly calls external DEX/bridge with no fallback. \\
+& CR-02 & Unverified External LP Token Value Assumption & LP tokens as collateral without verifying underlyings. \\
+& CR-03 & Cross-Protocol Call Not Checking Return Value & Return value not validated; revert not handled. \\
+& CR-04 & Cross-Protocol Price Dependency Not Verified & Manipulating protocol A's liquidity indirectly affects protocol B's pricing, without safeguards. \\
+\end{xltabular}
+
+\section{Evaluation Plan}
+Experiments have not yet been run. The evaluation will use CVE-confirmed positive samples and formally verified negative samples (e.g., Aave V3 PriceOracle). Metrics include precision, recall, F1, per-pattern triggering rate, average analysis time, and PoC reproducibility in Ganache. False positives will be traced to the specific LLM reasoning step. Slither and Mythril will serve as baselines.
+
+\section{Discussion and Future Work}
+The system currently has several key limitations. First, the vulnerability pattern library is static and cannot promptly adapt to newly emerging price manipulation patterns. Second, the one-way code scanning approach in Stage 3 is insufficient for capturing cross-contract price data flows, which may cause deep dependencies to be overlooked. Third, the LLM’s feature matching lacks an automatic verification mechanism, creating a risk of false positives. In addition, attack cost estimation relies on model inference and therefore has limited accuracy. Finally, the orchestrator lacks a quantitative basis for adjusting iteration depth.
+
+To address these limitations, future work will focus on several directions. Real-time vulnerability intelligence sources will be integrated to enable dynamic updates of the pattern library. A recursive sub-agent mechanism will be introduced to automatically trace external contract calls and construct cross-contract price dependency graphs. Lightweight symbolic execution will be integrated to perform secondary verification of LLM-detected matches. Real-time gas and AMM data, together with on-chain simulation environments, will replace inference-based estimation to provide accurate attack cost analysis. Finally, a quantitative scoring model based on vulnerability complexity and TVL exposure will be developed to support data-driven orchestration and iteration scheduling.
+
+\begin{thebibliography}{8}
+\setlength{\itemsep}{0pt}
+\bibitem{defiranger} Wu S, et al. \textit{DeFiRanger: Detecting Price Manipulation Attacks on DeFi Applications}. arXiv, 2021.
+\bibitem{li2025} Li W, Liu Z, et al. \textit{Comprehensive Review of Smart Contract and DeFi Security}. Expert Systems with Applications, 2025.
+\bibitem{carpentier} Carpentier-Desjardins C, et al. \textit{Mapping the DeFi Crime Landscape}. arXiv, 2023.
+\bibitem{jiang2026} Jiang S, et al. \textit{DeFi Security: A Survey}. High-Confidence Computing, 2026.
+\bibitem{owasp} OWASP Smart Contract Top 10, 2026.
+\bibitem{zobront} zobront/audits, Security Patterns \& Common Vulnerabilities.
+\bibitem{cao} Cao Y. \textit{In-depth Analysis of Common Patterns of DeFi Economic Attacks}. HashKey Research, 2021.
+\end{thebibliography}
+
+\end{document}

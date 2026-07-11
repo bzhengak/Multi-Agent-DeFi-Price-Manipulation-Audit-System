@@ -20,8 +20,7 @@ async function main() {
     const { getJSONResponse } = await import('../src/lib/llm');
     const r2 = await getJSONResponse<{ result: string }>(
       'Return a JSON object with a single field "result" set to "pass".',
-      'Return only JSON.',
-      { maxTokens: 200 }
+      'Return only JSON.'
     );
     console.log(`    -> OK (${Date.now() - t2}ms): result=${r2.result}`);
   } catch (e: any) {

@@ -32,7 +32,9 @@ const LLM_CONFIG = {
   temperature: 0.1,
   maxTokens: 65536,
   topP: 0.9,
-  timeout: 180_000,
+  // Raised from 180s: GLM-5.2 (Coding Plan) is a slow reasoning model and
+  // frequently exceeds the previous 3-minute ceiling, causing spurious timeouts.
+  timeout: 600_000,
 };
 
 // ─── Provider type ───────────────────────────────────────────────────────────
@@ -143,6 +145,16 @@ function isQuotaError(error: unknown): boolean {
   return false;
 }
 
+function isTimeoutError(error: unknown): boolean {
+  const err = error as Record<string, unknown>;
+  const name = (err.name as string) || '';
+  const message = ((err.message as string) || '').toLowerCase();
+  // OpenAI SDK throws APIConnectionTimeoutError (or APIConnectionError) on timeouts.
+  if (name === 'APIConnectionTimeoutError' || name === 'APITimeoutError') return true;
+  if (message.includes('timeout') || message.includes('timed out')) return true;
+  return false;
+}
+
 /**
  * Basic chat completion.
  */
@@ -212,6 +224,17 @@ export async function chatWithRetry(
         throw error;
       }
       lastError = error instanceof Error ? error : new Error('Unknown error');
+      // Timeout errors (slow model such as GLM-5.2): retry ONLY ONCE.
+      // Retrying a hung call just wastes the per-5h/per-week Coding Plan quota
+      // and prolongs the failure; a single retry guards against transient blips.
+      if (isTimeoutError(error)) {
+        console.warn(`[LLM] Timeout on attempt ${attempt}/${maxRetries}, retrying once (slow model):`, lastError.message);
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
+        }
+        throw error;
+      }
       console.warn(`[LLM] Attempt ${attempt}/${maxRetries} failed:`, lastError.message);
 
       if (attempt < maxRetries) {

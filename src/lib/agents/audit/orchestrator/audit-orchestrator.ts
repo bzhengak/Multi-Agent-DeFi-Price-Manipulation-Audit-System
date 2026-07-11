@@ -40,11 +40,15 @@ const DEFAULT_STAGE_BUDGETS: Record<StageName, number> = {
   protocol_detection: 5_000,
   context_building: 10_000,
   cross_contract_tracing: 30_000,
-  vulnerability_analysis: 2400000,
+  // Raised: 8-10 OTAU iterations each calling the (slow) GLM-5.2 primary LLM.
+  // With the 600s per-call SDK ceiling, a fully-slow run can exceed 40min.
+  vulnerability_analysis: 5_000_000,
   attack_reconstruction: 60_000,
   cost_estimation: 15_000,
   confidence_calibration: 5_000,
-  report_generation: 180_000,
+  // Raised: report_generation is a single LLM call (fastLlm -> GLM fallback when
+  // no fast provider is configured) that can exceed the old 3-minute cap.
+  report_generation: 600_000,
 };
 
 export class StageTimeoutError extends Error {
@@ -100,7 +104,7 @@ export class AuditOrchestrator {
 
   constructor(
     onProgress?: ProgressCallback,
-    totalTimeout: number = 3600000,
+    totalTimeout: number = 7_200_000,
     stageBudgets?: Partial<Record<StageName, number>>,
   ) {
     this.detector = new ProtocolTypeDetector();

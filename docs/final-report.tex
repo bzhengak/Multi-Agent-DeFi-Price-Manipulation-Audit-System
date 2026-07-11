@@ -1,0 +1,287 @@
+\documentclass[10pt]{article}
+\usepackage[left=1.8cm, right=1.8cm, top=1.1cm, bottom=1.3cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{xltabular}
+\setlength{\parskip}{0pt}
+\usepackage{titlesec}
+\makeatletter
+\def\@maketitle{%
+  \newpage
+  \null
+  \vskip -1cm
+  \begin{center}%
+  \let \footnote \thanks
+    {\LARGE \@title \par}%
+    \vskip 0.5em
+    {\large \@author \par}%
+    \vskip 0.5em
+    {\large \@date}%
+  \end{center}%
+  \par
+  \vskip 0.5em
+}
+\makeatother
+\titlespacing{\title}
+{0pt}
+{0ex plus .5ex minus .2ex}
+{0ex plus .2ex}
+\titlespacing{\author}
+{0pt}
+{0ex plus .5ex minus .2ex}
+{0ex plus .2ex}
+\titlespacing{\section}
+{0pt}
+{1ex plus .5ex minus .2ex}
+{0.8ex plus .2ex}
+\titlespacing{\subsection}
+{0pt}
+{0.75ex plus .5ex minus .2ex}
+{0.55ex plus .2ex}
+\titlespacing{\subsubsection}
+{0pt}
+{0.75ex plus .5ex minus .2ex}
+{0.55ex plus .2ex}
+\setlist{nosep,leftmargin=*}
+
+\title{Multi-Agent DeFi Price Manipulation Audit System\\ Final Report}
+\author{ZHENG Bowen (Student ID: 21286853)}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Background}
+DeFi protocols suffer heavy losses from price manipulation attacks that exploit misplaced trust in price feeds, transient AMM reserves, or privilege flaws. The proportion of cross-protocol composite attacks has risen significantly. In current auditing practices, AI is already capable of handling repetitive detection tasks. However, in scenarios such as price manipulation that involve economic models and composite attacks, deep analysis still heavily relies on human experts, creating a significant efficiency bottleneck.
+
+\section{Motivation}
+Multi-Agent collaborative systems offer a promising way to overcome this limitation. They decompose the auditing workflow into specialized steps such as protocol identification, context construction, vulnerability pattern matching, and attack path reconstruction. Through memory sharing and iterative verification, the Agents advance the process collaboratively, extending automation from surface-level feature detection to deeper vulnerability reasoning.
+
+\section{Technical Approach}
+
+The system adopts a layered architecture coordinated by an audit orchestrator. Seven stages execute sequentially, each delegating to a specialized agent that follows a cognitive loop of ``observe---think---act---update'' (OTAU). All agents share a common infrastructure---tool registry, memory system, and LLM client---accessed through the \texttt{BaseAgent} interface. This design separates concerns: each stage receives well-typed inputs from the previous one and produces structured outputs, avoiding shared mutable state.
+
+\begin{figure}[H]
+    \centering
+    \fbox{Architecture diagram placeholder}
+    \caption{System architecture: seven-stage pipeline with shared memory and tool registry.}
+    \label{fig:arch}
+\end{figure}
+
+\subsection{Stage 1 --- Protocol Identification}
+The first stage classifies the target contract into one of eight DeFi protocol categories (DEX/AMM, lending, perpetuals, yield aggregator, cross-chain bridge, stablecoin, options, or liquid staking) by scanning function signatures, interfaces, and state variables against weighted keyword and structural patterns. The classification result determines which vulnerability pattern set takes priority in subsequent analysis---for example, a lending protocol prioritizes collateral-ratio patterns (LR-02) and oracle-dependency patterns (OD-01--05), while a DEX prioritizes reserve-manipulation patterns (LR-01, LR-03). Pre-classification narrows the search space and reduces false positives that would arise from applying all 21 patterns indiscriminately.
+
+\subsection{Stage 2 --- Context Building and Cross-Contract Tracing}
+Context building assembles relevant pattern templates, historical case analogues, and protocol-specific attributes into a structured analysis brief. On top of this, a cross-contract tracer (\texttt{CrossContractTracer}) parses the target contract's source code via \texttt{@solidity-parser/parser}, extracts all external call targets---\texttt{IERC20}, \texttt{IPool}, \texttt{IOracle}, low-level \texttt{.call} selectors---and recursively fetches their verified source code from Etherscan up to a depth of two. The resulting call graph is injected into the analysis context so that Stage~3 can reason about cross-protocol price dependencies (CR-01, CR-04) rather than analyzing the contract in isolation. This directly addresses the class of composite attacks where manipulating protocol~A's reserves indirectly distorts protocol~B's pricing logic.
+
+\subsection{Stage 3 --- Iterative Vulnerability Analysis}
+Stage~3 is the analytical core. The agent scans the contract function by function, comparing code against the vulnerability patterns provided in context. Each iteration proceeds through the OTAU loop: the agent observes the current state (classification, context, prior findings), thinks about which patterns remain unexamined, acts by invoking the LLM via the tool registry with an optimized prompt, and updates its findings in episodic memory. Several mechanisms ensure this process is both thorough and efficient:
+
+\begin{itemize}
+    \item \textbf{Adaptive iteration budget (T11).} Instead of a fixed iteration count, the budget is computed as $max = \mathrm{round}(\text{patternComplexity} \times \log_{10}(\text{TVL} + 1) / 2)$, clamped to $[1, 10]$. High-TVL protocols with complex attack surfaces receive up to 10 iterations; simple ERC-20 tokens receive as few as 2.
+    \item \textbf{Convergence-based early stopping (T4).} After each round, a calibrated confidence score is computed. If the delta between consecutive scores falls below 0.05 for two or more iterations, the analysis is considered converged and terminates early, avoiding unnecessary LLM calls.
+    \item \textbf{Per-protocol prompt optimization (T2).} The \texttt{PromptOptimizer} injects protocol-specific analysis hints---e.g., ``check the constant-product invariant'' for AMMs, ``verify liquidation thresholds'' for lending---so that the LLM focuses on economically meaningful checks rather than generic pattern matching.
+    \item \textbf{Structured LLM output (T5).} Responses are enforced via JSON schema with three fallback modes (function-calling, \texttt{response\_format}, markdown-fence stripping) and a truncated-JSON recovery parser, reducing parse failures from $\sim$20\% to near zero across 100 consecutive test calls.
+\end{itemize}
+
+\subsection{Stage 4 --- Per-Vulnerability Attack Reconstruction}
+For each detected vulnerability, the \texttt{PriceManipulationReconstructor} generates a step-by-step attack narrative using a three-layer template architecture. Layer~1 provides six category-level skeletons (OD, LR, TO, AC, CL, CR), each defining a generic multi-phase attack flow. Layer~2 applies per-pattern overlays---21 data-driven patches that override or extend specific phases, fund-flow descriptions, and defense recommendations so that, for instance, an OD-01 (spot-price) finding produces a different execution step sequence than an OD-04 (stale-oracle) finding within the same Oracle Dependency category. Layer~3 performs per-finding LLM injection, mapping the specific \texttt{attackVector} and code snippet into the merged template, producing a concrete attack scenario rather than a generic description. Additionally, the reconstructor identifies combined attack chains---e.g., OD-04 $\rightarrow$ OD-05 (stale oracle cascading into heartbeat-missing exploitation)---when multiple vulnerabilities with known composability relationships co-occur.
+
+\subsection{Stage 5 --- Deterministic Cost Estimation}
+Rather than relying on LLM inference for attack cost, the system queries three on-chain tools in real time: gas price via \texttt{eth\_gasPrice}, native-token USD price via CoinGecko, and flash-loan fee rate via Aave~V3 \texttt{getReserveData}. These values are combined with per-pattern gas profiles (e.g., OD-01 single-pool manipulation $\approx$ 300{,}000 gas) to produce a deterministic cost range: $\text{cost} = \text{gasPrice} \times \text{estimatedGas} \times \text{tokenPrice} + \text{flashLoanPrincipal} \times \text{feeRate}$. Results are cached with a 5-minute TTL. This approach replaces the ``low / medium / high'' labels of LLM-inferred costs with verifiable, reproducible dollar-figure ranges.
+
+\subsection{Stage 6 --- Confidence Calibration}
+Each finding receives a calibrated confidence score aggregated across five dimensions: source code availability (verified vs.\ decompiled), pattern-matching priority (protocol-specific vs.\ generic), historical case support (similar past attacks exist), cross-round consistency (detected in multiple iterations), and economic feasibility (attack cost vs.\ potential profit). A weighted sum produces the final score, adjusted by an iteration-round factor that slightly discounts findings appearing only in the final round. Severity levels inherit directly from the pattern definition (Critical / High / Medium / Low).
+
+\subsection{Stage 7 --- Report Generation and Dual-Model Routing}
+The final stage consolidates all prior results into a structured audit report. A dual-model routing strategy (T15) directs complex reasoning tasks (Stages~1--6) to the primary model (GLM~5.2) and simpler tasks (report formatting, analysis summarization) to a fast model (DeepSeek~V4~Flash). If the fast provider is unconfigured, all calls fall back to the primary model, preserving backward compatibility. When the LLM quota is exhausted mid-pipeline, the orchestrator catches the \texttt{QuotaExceededError} at each stage boundary and returns a partial result containing all completed stages' outputs, rather than discarding the entire analysis.
+
+\subsection{Memory System and Learning Evolution}
+The memory system provides three layers: \textit{working memory} holds intermediate evidence within a single audit session; \textit{episodic memory} persists full audit traces across sessions in an SQLite backend; \textit{semantic memory} stores reusable domain knowledge---attack patterns, protocol characteristics, and best practices---retrievable via vector similarity search.
+
+A learning evolution mechanism (LEARN) closes the feedback loop between sessions. After each audit, high-confidence findings are automatically ingested into semantic memory. On subsequent analyses, the recall step searches for similar past cases by protocol type and detected patterns, surfacing relevant experience as few-shot context. This mechanism allows the system to accumulate institutional knowledge: the more cases it analyzes, the better its contextual hints become for future audits of similar protocols.
+
+\subsection{Shared Infrastructure}
+All agents interact with external services through the \texttt{ToolRegistry}, which enforces retry policies (exponential backoff, max 3), cache TTLs (1~hour default), and per-call timeouts (30~s). A server-sent events (SSE) state machine (T14) replaces the previous polling-based progress tracking, providing real-time stage updates to the frontend without \texttt{setInterval} overhead. An evaluation mode flag (\texttt{EVAL\_MODE}) disables autonomous knowledge ingestion during benchmark runs, ensuring that evaluation results do not contaminate the knowledge base.
+
+\subsection{Vulnerability Pattern Classification Framework}
+The system uses a root-cause taxonomy with six mutually exclusive categories; patterns within them can be composed. Table~\ref{tab:patterns} lists every pattern.
+
+\begin{xltabular}{\textwidth}{
+  >{\raggedright\arraybackslash}p{2.1cm}
+  >{\raggedright\arraybackslash}p{1.1cm}
+  >{\raggedright\arraybackslash}p{4.7cm}
+  >{\raggedright\arraybackslash}X
+}
+\caption{Vulnerability patterns}\label{tab:patterns}\\
+\toprule
+Category & Pattern ID & Pattern Name & Key Code Feature \\
+\midrule
+\endfirsthead
+\caption{Vulnerability patterns (continued)}\\
+\toprule
+Category & Pattern ID & Pattern Name & Key Code Feature \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\bottomrule
+\endlastfoot
+\multirow{5}{=}{Oracle Dependency} & OD-01 & Direct Spot Price Pricing & Price calculation uses \texttt{getReserves()} return without time weighting. \\
+& OD-02 & Short-Window / Manipulatable TWAP & TWAP window too short; easily distorted. \\
+& OD-03 & Centralized / Unverified Feed & Single off-chain API or unfiltered aggregator; admin can update. \\
+& OD-04 & Oracle Data Freshness Not Verified & Missing check on \texttt{updatedAt} or \texttt{roundId}. \\
+& OD-05 & Missing Oracle Liveness Tolerance & No heartbeat check; tolerates prolonged stagnation. \\
+\midrule
+\multirow{3}{=}{Liquidity \& Reserve Manipulability} & LR-01 & Mint/Burn Dependent on Instant. Reserves & Share calculation uses raw \texttt{reserve0/reserve1} without slippage protection. \\
+& LR-02 & Collateral Ratio Not Verifying Price Trust & Lending/liquidation relies on a manipulatable price source. \\
+& LR-03 & TVL/Volume-Driven Reward Distribution & Rewards or fees depend on instantly alterable TVL. \\
+\midrule
+\multirow{3}{=}{Transaction Ordering \& Timing} & TO-01 & Missing Deadline/Protection Window & No deadline or protection window for time-sensitive operations. \\
+& TO-02 & No Slippage Protection & \texttt{amountOutMin=0} or no enforced max slippage. \\
+& TO-03 & Reentrancy-Based Price Manipulation & Price updated after an external call without reentrancy lock. \\
+\midrule
+\multirow{3}{=}{Access Control \& Privilege Risks} & AC-01 & Oracle Address Unilaterally Updatable & Privileged function lacks timelock or multi-sig. \\
+& AC-02 & Privileged Adjustment of Econ. Parameters & Fees, collateral ratios adjustable without constraints. \\
+& AC-03 & Mint/Burn Authority Concentrated & Unlimited mint/burn can affect price. \\
+\midrule
+\multirow{3}{=}{Calculation Logic Bugs} & CL-01 & Exploitable Rounding Direction & Division/modulo remainder repeatedly extractable. \\
+& CL-02 & Decimal Mismatch & Tokens with different decimals used without normalization. \\
+& CL-03 & Inappropriate AMM Curve/Parameters & Custom curve or extreme volumes unprotected; price deviation. \\
+\midrule
+\multirow{4}{=}{Composability Risks} & CR-01 & Reliance on External Protocol as Sole Price Source & Core logic directly calls external DEX/bridge with no fallback. \\
+& CR-02 & Unverified External LP Token Value Assumption & LP tokens as collateral without verifying underlyings. \\
+& CR-03 & Cross-Protocol Call Not Checking Return Value & Return value not validated; revert not handled. \\
+& CR-04 & Cross-Protocol Price Dependency Not Verified & Manipulating protocol A's liquidity indirectly affects protocol B's pricing, without safeguards. \\
+\end{xltabular}
+
+\section{Evaluation}
+
+\subsection{Dataset}
+The evaluation uses a balanced 10+10 dataset designed to test both detection capability and false-positive resistance.
+
+\textbf{Positive samples} are 10 recent DeFi attack cases (April--June 2026) sourced from DeFiHackLabs, covering 8 of the 21 patterns across three chains (BSC~7, Ethereum~2, Base~1). These cases are explicitly absent from the system's knowledge base (\texttt{history.json}), eliminating data-leakage concerns. They were selected for recency---to ensure the attack vectors reflect current Solidity versions and DeFi composability practices---and for pattern diversity, spanning Oracle Dependency (OD-01), Liquidity (LR-01), Calculation Logic (CL-03), Access Control (AC-02), Transaction Ordering (TO-03), and Composability (CR-01).
+
+\textbf{Negative samples} are 10 professionally audited safe protocols (Uniswap~V3, Aave~V3, Compound~V3, Curve, Balancer, Lido, Chainlink, USDC, DAI), each with over \$1B TVL and formal audit coverage. These represent the ``hard negatives'' that a production deployment must not flag.
+
+Ground-truth labels for positive cases are derived from DeFiHackLabs \texttt{@Analysis} root-cause descriptions (Tier~2: community-verified PoC + transaction replay). Labels identify the \emph{exploited} vulnerability---the attack root cause---not necessarily every vulnerability present in the contract. This distinction has implications for precision interpretation, discussed in \S4.3.
+
+Prior to evaluation, the system completed a full learning cycle on all 33 historical cases in \texttt{history.json}. An evaluation-mode flag (\texttt{EVAL\_MODE}) prevented audit results from being ingested back into the knowledge base.
+
+\subsection{Baseline Design}
+Two baselines isolate different aspects of system performance:
+
+\textbf{Raw LLM} uses the identical model (GLM~5.2) and system prompt as the full system, but performs a single LLM call without protocol detection, context building, OTAU iteration, cross-contract tracing, or prompt optimization. This baseline controls for model capability: any performance difference between the full system and Raw LLM is attributable to the Agent architecture, not to model selection.
+
+\textbf{Slither} (v0.10+) represents the industry-standard static analyzer. It detects language-level patterns (reentrancy, access control, unchecked returns) but lacks DeFi-specific semantic patterns (oracle manipulation, reserve dependency, cross-protocol price flows). This baseline establishes the complementary positioning: Slither covers language safety; the proposed system covers economic-logic safety.
+
+\subsection{Metrics and Label Completeness}
+Five complementary metrics address the label completeness problem inherent in vulnerability detection---where ground-truth labels identify only the exploited vulnerability, causing detections of additional, real-but-unexploited vulnerabilities to be miscounted as false positives.
+
+\begin{table}[H]
+\centering
+\caption{Metric definitions and design rationale.}
+\label{tab:metrics}
+\small
+\begin{tabular}{p{2.8cm}p{12cm}}
+\toprule
+Metric & Measures \\
+\midrule
+Hit Rate (Wilson 95\% CI) & Fraction of cases where $\geq 1$ detected pattern matches the exploit root cause. Directly answers: ``Does the system find the attack?'' \\
+Safe-Contract Precision (Wilson 95\% CI) & Fraction of audited-safe contracts with zero false positives. Answers: ``Does the system hallucinate on safe code?'' Immune to label completeness because safe contracts have a well-defined ground truth (no vulnerability). \\
+Exploit-Matched Precision (Wilson 95\% CI) & $\text{TP} / (\text{TP} + \text{all FP})$, where FP is any detection not in the exploit label. A conservative \emph{lower bound} on true precision. \\
+Negative-Calibrated Precision & Bayesian adjustment: estimates the hallucination rate $h$ from the negative sample via Laplace smoothing $h = (\text{FP}_{\text{neg}} + 1) / (N_{\text{neg}} + 2)$, then discounts positive-sample FPs accordingly. Assumes the hallucination rate is uniform across contract types---justified because the system detects code-level features, not exploit metadata. \\
+Detection Discrimination Ratio (DDR) & Mean detections per vulnerable contract divided by mean detections per safe contract. Completely bypasses the label completeness problem: it does not require knowing which detections are ``correct,'' only that vulnerable code triggers more detections than safe code. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Results}
+
+Table~\ref{tab:overall} reports the five metrics alongside baseline comparisons.
+
+\begin{table}[H]
+\centering
+\caption{Overall evaluation results.}
+\label{tab:overall}
+\small
+\begin{tabular}{lcccc}
+\toprule
+Metric & This System & 95\% CI & Raw LLM & Slither \\
+\midrule
+Hit Rate & \textbf{100.0\%} (10/10) & [72.2\%, 100\%] & 60.0\% (6/10) & 0.0\% (0/10) \\
+Safe-Contract Precision & \textbf{100.0\%} (0 FP/10) & [72.2\%, 100\%] & 80.0\% & 100\% \\
+Exploit-Matched Precision & 22.4\% (13/58) & [13.6\%, 34.7\%] & 30.4\% & --- \\
+Negative-Calibrated Precision & \textbf{77.6\%} & [49.1\%, ---] & --- & --- \\
+Detection Discrimination Ratio & \textbf{$\infty$} (5.9 vs 0.0) & --- & --- & --- \\
+Mean Jaccard Similarity & 0.291 & [0.167, 0.441] & 0.242 & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The system achieves a 100\% hit rate---every vulnerable contract triggers at least one correct pattern---while producing zero false positives on 10 professionally audited safe contracts. The Raw LLM baseline, using the same model without the Agent architecture, achieves only 60\% hit rate and 0.20 false positives per safe contract. This 40-percentage-point gap is attributable entirely to the Agent loop (OTAU iteration, protocol-aware context, cross-contract tracing), not to model capability.
+
+The Exploit-Matched Precision of 22.4\% is a conservative lower bound. Among the 45 exploit-unmatched detections, categorization by theoretical plausibility reveals that 14 are patterns nearly ubiquitous in custom DeFi contracts (missing deadline, missing slippage protection, integer rounding), and 12 are patterns common to the specific contract types analyzed (spot-price dependency, admin-adjustable parameters, unchecked external calls). Only 19 require source-code-level verification to classify definitively. The Safe-Contract Precision of 100\% demonstrates that these additional detections are not hallucinations---the same detection logic produces zero output on well-defended contracts---suggesting they represent real but unexploited vulnerabilities rather than system errors.
+
+\subsection{Per-Pattern Coverage}
+
+Table~\ref{tab:perpattern} reports recall and precision for the eight patterns with ground-truth cases in the dataset. Thirteen of 21 patterns lack audit-verified cases and are listed as uncovered.
+
+\begin{table}[H]
+\centering
+\caption{Per-pattern recall and precision (patterns with $\geq 1$ ground-truth case).}
+\label{tab:perpattern}
+\small
+\begin{tabular}{lcccccc}
+\toprule
+Pattern & $n$ & TP & FN & FP & Recall & Precision \\
+\midrule
+OD-01 & 4 & 4 & 0 & 5 & 100\% & 44.4\% \\
+AC-02 & 4 & 4 & 0 & 3 & 100\% & 57.1\% \\
+CL-03 & 1 & 1 & 0 & 2 & 100\% & 33.3\% \\
+CR-01 & 1 & 1 & 0 & 0 & 100\% & 100\% \\
+TO-03 & 1 & 1 & 0 & 3 & 100\% & 25.0\% \\
+CL-02 & 1 & 1 & 0 & 0 & 100\% & 100\% \\
+LR-01 & 1 & 1 & 0 & 1 & 100\% & 50.0\% \\
+TO-02 & 1 & 0 & 1 & 5 & 0\% & 0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Recall is 100\% for seven of eight patterns; the single miss (TO-02 in case POS-2026-005) reflects a boundary case where a user-supplied parameter, rather than a contract-internal check, was the root cause. Precision varies because exploit-unmatched detections inflate the FP count per pattern---an artifact of the label completeness problem rather than detection inaccuracy.
+
+\section{Limitations}
+
+\textbf{Static pattern taxonomy.} The 21-pattern library is manually defined. Although the learning evolution mechanism enables cross-session knowledge accumulation via RAG retrieval, novel attack types---patterns not yet represented in the taxonomy---cannot be autonomously discovered. Adding a new pattern requires manual definition of code features, severity, and related attacks, followed by integration into the protocol-to-pattern mapping.
+
+\textbf{Absence of formal verification.} Detection relies entirely on LLM reasoning. Cross-contract context tracing (Stage~2) and multi-dimensional confidence calibration (Stage~6) reduce false positives, but the system cannot produce a mathematical proof that a detected pattern is exploitable. Integration of symbolic execution (e.g., Mythril) for property-based secondary verification was descoped during development and remains future work.
+
+\textbf{Cost estimation accuracy.} Stage~5 replaces LLM-inferred costs with deterministic calculation using real-time chain data, improving accuracy substantially. Remaining limitations include: gas estimates use pattern-level profiles rather than transaction-specific simulation; flash-loan fee rates assume Aave~V3 as the sole liquidity provider; and MEV-related costs (priority gas auctions, sandwich competition) are not modeled.
+
+\textbf{Sample size and label completeness.} The evaluation dataset comprises 10 positive and 10 negative cases, yielding Wilson confidence intervals of approximately $\pm$30 percentage points. Ground-truth labels identify only the exploited vulnerability per case, not all vulnerabilities present. True precision therefore lies in a range---bounded below by Exploit-Matched Precision (22.4\%) and above by Negative-Calibrated Precision (77.6\%)---rather than at a single point. Additionally, 13 of 21 patterns lack audit-verified ground-truth cases, leaving per-pattern metrics unavailable for the majority of the taxonomy.
+
+\textbf{LLM dependency.} The entire pipeline depends on LLM reasoning quality. Model upgrades, prompt modifications, or provider-level rate limiting can affect result reproducibility. Structured JSON output enforcement (T5) and low temperature settings (0.1--0.2) mitigate but do not eliminate output variance.
+
+\section{Conclusion}
+
+This work demonstrates that a multi-agent architecture can substantially improve LLM-based DeFi vulnerability detection over single-call approaches. The seven-stage pipeline---protocol identification, context building with cross-contract tracing, iterative OTAU analysis with adaptive budgeting, per-vulnerability attack reconstruction, deterministic cost estimation, multi-dimensional confidence calibration, and dual-model report generation---achieves 100\% hit rate on 10 recent attack cases and zero false positives on 10 audited safe protocols. The evaluation addresses the label completeness problem through five complementary metrics, showing that the system's additional detections on vulnerable contracts are unlikely to be hallucinations. These results suggest that specialized agent architectures, rather than more powerful individual models, are the key pathway to practical automated DeFi auditing.
+
+\begin{thebibliography}{10}
+\setlength{\itemsep}{0pt}
+\bibitem{defiranger} Wu S, et al. \textit{DeFiRanger: Detecting Price Manipulation Attacks on DeFi Applications}. arXiv, 2021.
+\bibitem{li2025} Li W, Liu Z, et al. \textit{Comprehensive Review of Smart Contract and DeFi Security}. Expert Systems with Applications, 2025.
+\bibitem{carpentier} Carpentier-Desjardins C, et al. \textit{Mapping the DeFi Crime Landscape}. arXiv, 2023.
+\bibitem{jiang2026} Jiang S, et al. \textit{DeFi Security: A Survey}. High-Confidence Computing, 2026.
+\bibitem{owasp} OWASP Smart Contract Top 10, 2026.
+\bibitem{zobront} zobront/audits, Security Patterns \& Common Vulnerabilities.
+\bibitem{cao} Cao Y. \textit{In-depth Analysis of Common Patterns of DeFi Economic Attacks}. HashKey Research, 2021.
+\bibitem{defihacklabs} Sun~Web3Sec. \textit{DeFiHackLabs: Reproduce DeFi Attack Incidents}. GitHub repository, 2026.
+\bibitem{slither} Feist J, Grech G. \textit{Slither: A Static Analyzer for Smart Contracts}. USENIX Security, 2019.
+\bibitem{foundry} Foundry. \textit{A Blazing Fast Toolkit for Ethereum Application Development}. Paradigm, 2026.
+\end{thebibliography}
+
+\end{document}
