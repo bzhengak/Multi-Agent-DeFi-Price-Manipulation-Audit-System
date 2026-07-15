@@ -32,9 +32,9 @@ const LLM_CONFIG = {
   temperature: 0.1,
   maxTokens: 65536,
   topP: 0.9,
-  // Raised from 180s: GLM-5.2 (Coding Plan) is a slow reasoning model and
-  // frequently exceeds the previous 3-minute ceiling, causing spurious timeouts.
-  timeout: 600_000,
+  // Raised for thinking mode: reasoning tokens take significantly longer to generate.
+  // Non-thinking calls finish well before this limit.
+  timeout: 1_200_000,
 };
 
 // ─── Provider type ───────────────────────────────────────────────────────────
@@ -123,6 +123,24 @@ function getModelForProvider(provider?: LLMProvider): string {
   return LLM_CONFIG.model;
 }
 
+/**
+ * Determine whether thinking mode should be enabled for this call.
+ *
+ * Controlled by LLM_THINKING env var:
+ *   'enabled' → thinking on for ALL DeepSeek calls (primary + medium)
+ *   'auto'    → thinking on for PRIMARY provider only (vulnerability analysis)
+ *   'disabled'/unset → thinking off (backward compatible, original behaviour)
+ *
+ * DeepSeek V4 Pro defaults to thinking=enabled server-side; we explicitly
+ * send the parameter to ensure deterministic behaviour.
+ */
+function shouldEnableThinking(provider?: LLMProvider): boolean {
+  const mode = process.env.LLM_THINKING || 'disabled';
+  if (mode === 'enabled') return true;
+  if (mode === 'auto') return provider === 'primary' || provider === undefined;
+  return false;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export class QuotaExceededError extends Error {
@@ -136,12 +154,16 @@ function isQuotaError(error: unknown): boolean {
   const err = error as Record<string, unknown>;
   const status = err.status as number | undefined;
   const message = (err.message as string)?.toLowerCase() || '';
-  // HTTP 402 Payment Required, 429 Too Many Requests
-  if (status === 402 || status === 429) return true;
+  // HTTP 402 Payment Required, 429 Too Many Requests; 400 model-not-found often means quota exhausted
+  if (status === 400 || status === 402 || status === 429) return true;
   // DeepSeek/OpenAI quota-specific messages
   if (message.includes('quota') || message.includes('insufficient')) return true;
   if (message.includes('billing') || message.includes('payment')) return true;
   if (message.includes('exceeded') && (message.includes('rate') || message.includes('limit'))) return true;
+  // Chinese-language error patterns (GLM coding-plan SDK)
+  if (message.includes('模型不存在') || message.includes('余额不足')) return true;
+  if (message.includes('配额不足') || message.includes('频率限制')) return true;
+  if (message.includes('请求过多') || message.includes('请求过于频繁')) return true;
   return false;
 }
 
@@ -180,13 +202,19 @@ export async function chatCompletion(
       top_p: config.topP,
     };
     if (model?.includes('deepseek')) {
-      (params as any).thinking = { type: 'disabled' };
+      const enableThinking = shouldEnableThinking(provider);
+      (params as any).thinking = { type: enableThinking ? 'enabled' : 'disabled' };
+      if (enableThinking) (params as any).reasoning_effort = 'high';
     }
     const completion = await openai.chat.completions.create(params as any);
 
+    const finishReason = completion.choices?.[0]?.finish_reason;
     const content = completion.choices?.[0]?.message?.content;
     if (!content) {
       throw new Error('LLM returned empty response');
+    }
+    if (finishReason === 'length') {
+      console.warn(`[LLM] Chat response truncated by max_tokens limit (${config.maxTokens}). Output may be incomplete.`);
     }
     return content;
   } catch (error: unknown) {
@@ -471,14 +499,14 @@ export function getStructuredOutputMode(): StructuredOutputMode {
 }
 
 /**
- * Get structured JSON from the LLM using the configured mode.
+ * Get structured JSON from the LLM using model-aware adaptive fallback chains.
  *
- * Strategy depends on LLM_OUTPUT_MODE:
- *  - 'tool':        Use OpenAI function calling (tools + tool_choice)
- *  - 'json_schema': Use OpenAI response_format json_schema
- *  - 'markdown':    Fall back to getJSONResponse (fence stripping + brace matching)
+ * Fallback chain per model:
+ *   DeepSeek:  tool → json_object → markdown
+ *   GLM-5.2:   json_schema → tool → markdown
+ *   Unknown:   tool → json_schema → markdown
  *
- * Modes 'tool' and 'json_schema' automatically fall back to 'markdown' on failure.
+ * Each mode internally cascades: repairJSON → parseJSONFromLLM before throwing upward.
  */
 export async function getStructuredJSONResponse<T>(
   systemPrompt: string,
@@ -487,28 +515,60 @@ export async function getStructuredJSONResponse<T>(
   options: Partial<typeof LLM_CONFIG> = {},
   provider?: LLMProvider,
 ): Promise<T> {
-  const mode = getStructuredOutputMode();
   const config = { ...LLM_CONFIG, ...options };
   const model = provider ? getModelForProvider(provider) : config.model;
   const configWithModel = { ...config, model };
+  const modelLower = model?.toLowerCase() || '';
+  const isDeepSeek = modelLower.includes('deepseek');
+  const isGLM = modelLower.includes('glm');
 
-  if (mode === 'tool') {
+  if (isDeepSeek) {
+    // DS: tool (forced function call, most reliable) → json_object (native DS path) → markdown (final)
     try {
-      return await getStructuredJSONViaTool<T>(systemPrompt, userPrompt, jsonSchema, configWithModel);
+      return await getStructuredJSONViaTool<T>(systemPrompt, userPrompt, jsonSchema, configWithModel, provider);
     } catch (error) {
-      console.warn('[LLM] Structured output via tool failed, falling back to json_schema:', error instanceof Error ? error.message : error);
+      if (isQuotaError(error)) throw error;
+      console.warn('[LLM] DS tool mode failed, falling to json_object:', error instanceof Error ? error.message : error);
     }
+    try {
+      return await getStructuredJSONViaJSONObject<T>(systemPrompt, userPrompt, jsonSchema, configWithModel, provider);
+    } catch (error) {
+      if (isQuotaError(error)) throw error;
+      console.warn('[LLM] DS json_object mode failed, falling to markdown:', error instanceof Error ? error.message : error);
+    }
+    return getJSONResponse<T>(systemPrompt, userPrompt, provider);
   }
 
-  if (mode === 'tool' || mode === 'json_schema') {
+  if (isGLM) {
+    // GLM: json_schema (native schema enforcement, most reliable) → tool → markdown
     try {
-      return await getStructuredJSONViaSchema<T>(systemPrompt, userPrompt, jsonSchema, configWithModel);
+      return await getStructuredJSONViaSchema<T>(systemPrompt, userPrompt, jsonSchema, configWithModel, provider);
     } catch (error) {
-      console.warn('[LLM] Structured output via json_schema failed, falling back to markdown:', error instanceof Error ? error.message : error);
+      if (isQuotaError(error)) throw error;
+      console.warn('[LLM] GLM json_schema mode failed, falling to tool:', error instanceof Error ? error.message : error);
     }
+    try {
+      return await getStructuredJSONViaTool<T>(systemPrompt, userPrompt, jsonSchema, configWithModel, provider);
+    } catch (error) {
+      if (isQuotaError(error)) throw error;
+      console.warn('[LLM] GLM tool mode failed, falling to markdown:', error instanceof Error ? error.message : error);
+    }
+    return getJSONResponse<T>(systemPrompt, userPrompt, provider);
   }
 
-  // Final fallback: markdown mode (always works)
+  // Unknown model: original fallback chain (tool → json_schema → markdown)
+  try {
+    return await getStructuredJSONViaTool<T>(systemPrompt, userPrompt, jsonSchema, configWithModel, provider);
+  } catch (error) {
+    if (isQuotaError(error)) throw error;
+    console.warn('[LLM] Tool mode failed, falling to json_schema:', error instanceof Error ? error.message : error);
+  }
+  try {
+    return await getStructuredJSONViaSchema<T>(systemPrompt, userPrompt, jsonSchema, configWithModel, provider);
+  } catch (error) {
+    if (isQuotaError(error)) throw error;
+    console.warn('[LLM] json_schema mode failed, falling to markdown:', error instanceof Error ? error.message : error);
+  }
   return getJSONResponse<T>(systemPrompt, userPrompt, provider);
 }
 
@@ -520,8 +580,9 @@ async function getStructuredJSONViaTool<T>(
   userPrompt: string,
   jsonSchema: Record<string, unknown>,
   config: typeof LLM_CONFIG,
+  provider?: LLMProvider,
 ): Promise<T> {
-  const openai = getClient();
+  const openai = getClient(provider);
 
   const toolParams: Record<string, unknown> = {
     model: config.model,
@@ -542,13 +603,17 @@ async function getStructuredJSONViaTool<T>(
         },
       },
     ],
-    tool_choice: { type: 'function', function: { name: 'emit' } },
+    tool_choice: 'required',
   };
   // DeepSeek API: thinking is a top-level body parameter (not via extra_body)
   if (config.model?.includes('deepseek')) {
-    (toolParams as any).thinking = { type: 'disabled' };
+    const enableThinking = shouldEnableThinking(provider);
+    (toolParams as any).thinking = { type: enableThinking ? 'enabled' : 'disabled' };
+    if (enableThinking) (toolParams as any).reasoning_effort = 'high';
   }
+  console.log(`[LLM] Sending structured request via tool mode (model: ${config.model})`);
   const completion = await openai.chat.completions.create(toolParams as any);
+  console.log(`[LLM] Response received (finish_reason: ${completion.choices?.[0]?.finish_reason})`);
 
   const toolCall = completion.choices?.[0]?.message?.tool_calls?.[0];
   if (!toolCall) {
@@ -562,11 +627,71 @@ async function getStructuredJSONViaTool<T>(
   try {
     return JSON.parse(args) as T;
   } catch {
-    // GLM 5.2 may return literal newlines in function arguments
+    // Stage 1: repair known JSON issues (trailing commas, missing quotes, truncation, etc.)
     try {
-      return JSON.parse(sanitizeJsonLiterals(args)) as T;
+      return JSON.parse(repairJSON(args)) as T;
     } catch {
-      throw new Error('LLM tool call arguments contain unparseable JSON');
+      // Stage 2: robust 4-strategy parser (fences, brace matching, lenient truncation)
+      try {
+        return parseJSONFromLLM<T>(args);
+      } catch {
+        throw new Error('LLM tool call arguments contain unparseable JSON');
+      }
+    }
+  }
+}
+
+/**
+ * Structured output via OpenAI response_format json_object (DS native path).
+ */
+async function getStructuredJSONViaJSONObject<T>(
+  systemPrompt: string,
+  userPrompt: string,
+  jsonSchema: Record<string, unknown>,
+  config: typeof LLM_CONFIG,
+  provider?: LLMProvider,
+): Promise<T> {
+  const openai = getClient(provider);
+
+  // DS requires the word "json" in the prompt for json_object mode
+  const enhancedPrompt = systemPrompt.includes('json')
+    ? systemPrompt
+    : `${systemPrompt}\n\nYou must return valid JSON.`;
+
+  const shapeHint = `\n\nExpected JSON shape:\n${JSON.stringify(jsonSchema, null, 2)}`;
+
+  const params: Record<string, unknown> = {
+    model: config.model,
+    messages: [
+      { role: 'system', content: enhancedPrompt },
+      { role: 'user', content: userPrompt + shapeHint },
+    ],
+    temperature: config.temperature,
+    max_tokens: config.maxTokens,
+    top_p: config.topP,
+    response_format: { type: 'json_object' } as never,
+  };
+  if (config.model?.includes('deepseek')) {
+    const enableThinking = shouldEnableThinking(provider);
+    (params as any).thinking = { type: enableThinking ? 'enabled' : 'disabled' };
+    if (enableThinking) (params as any).reasoning_effort = 'high';
+  }
+  console.log(`[LLM] Sending structured request via json_object mode (model: ${config.model})`);
+  const completion = await openai.chat.completions.create(params as any);
+  console.log(`[LLM] Response received (finish_reason: ${completion.choices?.[0]?.finish_reason})`);
+
+  const content = completion.choices?.[0]?.message?.content;
+  if (!content || content.trim().length === 0) {
+    throw new Error('LLM returned empty response with json_object mode');
+  }
+
+  try {
+    return JSON.parse(content) as T;
+  } catch {
+    try {
+      return JSON.parse(repairJSON(content)) as T;
+    } catch {
+      return parseJSONFromLLM<T>(content);
     }
   }
 }
@@ -607,6 +732,66 @@ function sanitizeJsonLiterals(json: string): string {
   return chars.join('');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// JSON Repair — multi-layer heuristic fixer for malformed LLM JSON output
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Repair common JSON formatting issues from LLM outputs.
+ * Each layer handles a specific pattern; fails early on valid JSON.
+ */
+function repairJSON(raw: string): string {
+  let s = raw;
+
+  // Layer 1: Escape control characters in strings (existing sanitizeJsonLiterals)
+  s = sanitizeJsonLiterals(s);
+
+  // Layer 2: Strip JSON comments (//, /* */, #)
+  s = s.replace(/\/\/[^\n\r]*/g, '');
+  s = s.replace(/\/\*[\s\S]*?\*\//g, '');
+  s = s.replace(/#[^\n\r]*/g, '');
+
+  // Layer 3: Fix trailing commas and double/multiple commas
+  s = s.replace(/,(\s*[}\]])/g, '$1');
+  s = s.replace(/,{2,}/g, ',');
+
+  // Layer 4: Fix DeepSeek strict mode bug — missing closing quote on key before colon
+  // e.g. {"selected: ["A"]} → {"selected": ["A"]}
+  s = s.replace(/([,\{])\s*"(\w[\w\d_]*):(\s*[\[{"\d-])/g, '$1 "$2":$3');
+
+  // Layer 5: Unquoted keys (safe after { or ,)
+  s = s.replace(/([,\{])\s*(\w[\w\d_]+)\s*:/g, '$1 "$2":');
+
+  // Layer 6: Single quotes → double quotes (heuristic, may over-match)
+  s = s.replace(/'/g, '"');
+
+  // Layer 7: Fix missing closing brackets (truncation)
+  s = closeBrackets(s);
+
+  return s;
+}
+
+/**
+ * Add missing closing brackets to a potentially truncated JSON string.
+ */
+function closeBrackets(s: string): string {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (const ch of s) {
+    if (esc) { esc = false; continue; }
+    if (ch === '\\' && inStr) { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{' || ch === '[') depth++;
+    if (ch === '}' || ch === ']') depth--;
+  }
+  if (depth > 0) {
+    return s + '}'.repeat(depth);
+  }
+  return s;
+}
+
 /**
  * Structured output via OpenAI response_format json_schema.
  */
@@ -615,8 +800,9 @@ async function getStructuredJSONViaSchema<T>(
   userPrompt: string,
   jsonSchema: Record<string, unknown>,
   config: typeof LLM_CONFIG,
+  provider?: LLMProvider,
 ): Promise<T> {
-  const openai = getClient();
+  const openai = getClient(provider);
 
   const schemaParams: Record<string, unknown> = {
     model: config.model,
@@ -637,24 +823,29 @@ async function getStructuredJSONViaSchema<T>(
     } as never,
   };
   if (config.model?.includes('deepseek')) {
-    (schemaParams as any).thinking = { type: 'disabled' };
+    const enableThinking = shouldEnableThinking(provider);
+    (schemaParams as any).thinking = { type: enableThinking ? 'enabled' : 'disabled' };
+    if (enableThinking) (schemaParams as any).reasoning_effort = 'high';
   }
   const completion = await openai.chat.completions.create(schemaParams as any);
 
+  const finishReason = completion.choices?.[0]?.finish_reason;
   const content = completion.choices?.[0]?.message?.content;
   if (!content) {
     throw new Error('LLM returned empty response with json_schema mode');
   }
+  if (finishReason === 'length') {
+    console.warn(`[LLM] json_schema response truncated by max_tokens limit (${config.maxTokens}). Output may be incomplete.`);
+  }
 
-  // The response should be valid JSON per schema, but handle markdown fences
-  // in case the API ignores response_format and returns text with fences.
   try {
     return JSON.parse(content) as T;
   } catch {
+    // Stage 1: repair known LLM JSON issues
     try {
-      return JSON.parse(sanitizeJsonLiterals(content)) as T;
+      return JSON.parse(repairJSON(content)) as T;
     } catch {
-      // Use our robust parser (handles fences, truncation, etc.)
+      // Stage 2: robust 4-strategy parser (fences, brace matching, truncation repair)
       return parseJSONFromLLM<T>(content);
     }
   }

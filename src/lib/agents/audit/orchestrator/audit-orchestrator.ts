@@ -40,10 +40,13 @@ const DEFAULT_STAGE_BUDGETS: Record<StageName, number> = {
   protocol_detection: 5_000,
   context_building: 10_000,
   cross_contract_tracing: 30_000,
-  // Raised: 8-10 OTAU iterations each calling the (slow) GLM-5.2 primary LLM.
-  // With the 600s per-call SDK ceiling, a fully-slow run can exceed 40min.
+  // Raised: 8-10 OTAU iterations each calling the primary LLM.
+  // With thinking mode (reasoning_effort=high), a single call can take 15-20 min.
+  // Budget allows 3-4 thinking iterations within a single stage.
   vulnerability_analysis: 5_000_000,
-  attack_reconstruction: 60_000,
+  // Raised: attack reconstruction generates per-vuln narratives via primary LLM.
+  // With thinking, a single multi-vuln reconstruction call can exceed 5 min.
+  attack_reconstruction: 600_000,
   cost_estimation: 15_000,
   confidence_calibration: 5_000,
   // Raised: report_generation is a single LLM call (fastLlm -> GLM fallback when
@@ -66,6 +69,8 @@ export interface AuditResult {
   reconstruction: ReconstructionResult;
   calibratedResult: CalibratedResult;
   reportMarkdown: string;
+  codeTruncated: boolean;
+  codeTruncationRatio: number;
   summary: {
     overallRisk: string;
     totalIssues: number;
@@ -176,6 +181,8 @@ export class AuditOrchestrator {
     let reconstruction: ReconstructionResult | undefined;
     let calibratedResult: CalibratedResult | undefined;
     let reportMarkdown: string | undefined;
+    let codeTruncated = false;
+    let codeTruncationRatio = 0;
 
     // Step 1: Protocol Detection
     try {
@@ -207,8 +214,10 @@ export class AuditOrchestrator {
       const agentResult = await this.runStage('vulnerability_analysis', () => vulnAgent.run());
       analysisResult = (agentResult.data as { analysisResult: VulnerabilityAnalysisResult }).analysisResult;
       const iterationCount = (agentResult.data as { iterationCount: number }).iterationCount;
+      codeTruncated = (agentResult.data as { codeTruncated?: boolean }).codeTruncated ?? false;
+      codeTruncationRatio = (agentResult.data as { codeTruncationRatio?: number }).codeTruncationRatio ?? 0;
       completedStages.push('vulnerability_analysis');
-      this.emit({ stage: 'vulnerability_analysis', progress: 50, details: `Found ${analysisResult.vulnerabilities.length} vulnerabilities in ${iterationCount} iterations` });
+      this.emit({ stage: 'vulnerability_analysis', progress: 50, details: `Found ${analysisResult.vulnerabilities.length} vulnerabilities in ${iterationCount} iterations${codeTruncated ? ' [CODE TRUNCATED]' : ''}` });
 
       // Step 4: Attack Reconstruction
       this.emit({ stage: 'attack_reconstruction', progress: 55, details: 'Reconstructing attack scenarios...' });
@@ -248,10 +257,10 @@ export class AuditOrchestrator {
       // Step 7: Report Generation (uses fast provider)
       this.emit({ stage: 'report_generation', progress: 85, details: 'Generating audit report...' });
       reportMarkdown = await this.runStage('report_generation', () =>
-        this.generateEnhancedReport(analysisResult!, reconstruction!, calibratedResult!, classification!, contractName, blockchain, address),
+        this.generateEnhancedReport(analysisResult!, reconstruction!, calibratedResult!, classification!, contractName, blockchain, address, codeTruncated, codeTruncationRatio),
       );
       completedStages.push('report_generation');
-      this.emit({ stage: 'report_generation', progress: 95, details: 'Report generated' });
+      this.emit({ stage: 'report_generation', progress: 95, details: `Report generated${codeTruncated ? ' [CODE TRUNCATED]' : ''}` });
     } catch (error) {
       if (error instanceof QuotaExceededError) {
         const failedStage = this.detectFailedStage(completedStages);
@@ -281,7 +290,7 @@ export class AuditOrchestrator {
       try {
         const { ingestAuditResult } = await import('../learning/case-ingester');
         const ingestResult = await ingestAuditResult(
-          { analysisResult: analysisResult!, classification: classification!, reconstruction: reconstruction!, calibratedResult: calibratedResult!, reportMarkdown: reportMarkdown!, summary },
+          { analysisResult: analysisResult!, classification: classification!, reconstruction: reconstruction!, calibratedResult: calibratedResult!, reportMarkdown: reportMarkdown!, codeTruncated, codeTruncationRatio, summary },
           blockchain,
           address,
           { pocResult: undefined },
@@ -300,6 +309,8 @@ export class AuditOrchestrator {
       reconstruction: reconstruction!,
       calibratedResult: calibratedResult!,
       reportMarkdown: reportMarkdown!,
+      codeTruncated,
+      codeTruncationRatio,
       summary,
     };
   }
@@ -318,6 +329,8 @@ export class AuditOrchestrator {
     let reconstruction: ReconstructionResult | undefined;
     let calibratedResult: CalibratedResult | undefined;
     let reportMarkdown: string | undefined;
+    const codeTruncated = false;
+    const codeTruncationRatio = 0;
 
     const placeholderCode = `// Source code unavailable for case ${caseId}\n// Attack description: ${caseNote}\n// Vulnerability pattern: ${vulnerabilityPattern}`;
 
@@ -449,7 +462,7 @@ Please output the complete analysis results in the specified JSON format. Set co
       try {
         const { ingestAuditResult } = await import('../learning/case-ingester');
         const ingestResult = await ingestAuditResult(
-          { analysisResult: analysisResult!, classification: classification!, reconstruction: reconstruction!, calibratedResult: calibratedResult!, reportMarkdown: reportMarkdown!, summary },
+          { analysisResult: analysisResult!, classification: classification!, reconstruction: reconstruction!, calibratedResult: calibratedResult!, reportMarkdown: reportMarkdown!, codeTruncated, codeTruncationRatio, summary },
           blockchain,
           contractAddress,
           { pocResult: undefined },
@@ -468,6 +481,8 @@ Please output the complete analysis results in the specified JSON format. Set co
       reconstruction: reconstruction!,
       calibratedResult: calibratedResult!,
       reportMarkdown: reportMarkdown!,
+      codeTruncated,
+      codeTruncationRatio,
       summary,
     };
   }
@@ -480,6 +495,8 @@ Please output the complete analysis results in the specified JSON format. Set co
     contractName: string,
     blockchain: string,
     address?: string,
+    codeTruncated?: boolean,
+    codeTruncationRatio?: number,
   ): Promise<string> {
     const historyCases = await loadHistoryCases();
     const matchedCaseIds = analysisResult.vulnerabilities
@@ -526,7 +543,11 @@ Please output the complete analysis results in the specified JSON format. Set co
       knowledgeReferences: v.knowledge_references || null,
     }));
 
-    const userPrompt = `Please generate a comprehensive audit report based on the following enhanced analysis results.
+    const truncationWarning = codeTruncated
+      ? `> **⚠️ Warning**: The contract source code exceeds the LLM context window. Only ~${((1 - (codeTruncationRatio ?? 0)) * 100).toFixed(0)}% of the source code could be sent for analysis. Vulnerabilities in truncated code regions may be missed. Consider splitting the contract or running targeted sub-analyses for complete coverage.\n\n`
+      : '';
+
+    const userPrompt = `${truncationWarning}Please generate a comprehensive audit report based on the following enhanced analysis results.
 
 ## Contract Information
 - Contract Name: ${contractName}
