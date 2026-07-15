@@ -154,8 +154,10 @@ function isQuotaError(error: unknown): boolean {
   const err = error as Record<string, unknown>;
   const status = err.status as number | undefined;
   const message = (err.message as string)?.toLowerCase() || '';
-  // HTTP 402 Payment Required, 429 Too Many Requests; 400 model-not-found often means quota exhausted
-  if (status === 400 || status === 402 || status === 429) return true;
+  // HTTP 402 Payment Required, 429 Too Many Requests are always quota errors.
+  // 400 is ambiguous: "model not found" may mean quota, but "Thinking mode does
+  // not support this tool_choice" is a parameter incompatibility. Check message.
+  if (status === 402 || status === 429) return true;
   // DeepSeek/OpenAI quota-specific messages
   if (message.includes('quota') || message.includes('insufficient')) return true;
   if (message.includes('billing') || message.includes('payment')) return true;
@@ -452,8 +454,8 @@ function extractJsonBlockLenient(text: string): string | null {
   }
   fixed = chars.join('');
 
-  // Fix 3: Count depth and add missing closing braces/brackets
-  let depth = 0;
+  // Fix 3: Count depth and add missing closing braces/brackets (stack-based for mixed types)
+  const stack: string[] = [];
   inStr = false;
   escaped = false;
   for (let i = 0; i < fixed.length; i++) {
@@ -462,15 +464,12 @@ function extractJsonBlockLenient(text: string): string | null {
     if (ch === '\\' && inStr) { escaped = true; continue; }
     if (ch === '"') { inStr = !inStr; continue; }
     if (inStr) continue;
-    if (ch === '{' || ch === '[') depth++;
-    if (ch === '}' || ch === ']') depth--;
+    if (ch === '{' || ch === '[') stack.push(ch);
+    if (ch === '}' || ch === ']') stack.pop();
   }
 
-  // Only attempt to fix if we have unclosed braces (truncated)
-  if (depth > 0) {
-    for (let i = 0; i < depth; i++) {
-      fixed += closer;
-    }
+  if (stack.length > 0) {
+    fixed += stack.reverse().map(c => c === '{' ? '}' : ']').join('');
   }
 
   // Fix 4: Ensure proper JSON ending (no trailing comma before last brace)
@@ -524,11 +523,18 @@ export async function getStructuredJSONResponse<T>(
 
   if (isDeepSeek) {
     // DS: tool (forced function call, most reliable) → json_object (native DS path) → markdown (final)
-    try {
-      return await getStructuredJSONViaTool<T>(systemPrompt, userPrompt, jsonSchema, configWithModel, provider);
-    } catch (error) {
-      if (isQuotaError(error)) throw error;
-      console.warn('[LLM] DS tool mode failed, falling to json_object:', error instanceof Error ? error.message : error);
+    // NOTE: tool_choice: 'required' is incompatible with thinking mode.
+    // When thinking is enabled, skip tool mode and start with json_object.
+    const enableThinking = shouldEnableThinking(provider);
+    if (!enableThinking) {
+      try {
+        return await getStructuredJSONViaTool<T>(systemPrompt, userPrompt, jsonSchema, configWithModel, provider);
+      } catch (error) {
+        if (isQuotaError(error)) throw error;
+        console.warn('[LLM] DS tool mode failed, falling to json_object:', error instanceof Error ? error.message : error);
+      }
+    } else {
+      console.log('[LLM] Thinking enabled — skipping tool mode (incompatible with tool_choice:required), using json_object');
     }
     try {
       return await getStructuredJSONViaJSONObject<T>(systemPrompt, userPrompt, jsonSchema, configWithModel, provider);
@@ -762,8 +768,10 @@ function repairJSON(raw: string): string {
   // Layer 5: Unquoted keys (safe after { or ,)
   s = s.replace(/([,\{])\s*(\w[\w\d_]+)\s*:/g, '$1 "$2":');
 
-  // Layer 6: Single quotes → double quotes (heuristic, may over-match)
-  s = s.replace(/'/g, '"');
+  // Layer 6: Single quotes → double quotes (only at JSON delimiter positions)
+  // Avoids breaking apostrophes inside string values (e.g., "It's a bug")
+  s = s.replace(/([:,\[{]\s*)'/g, '$1"');
+  s = s.replace(/'(\s*[,:}\]])/g, '"$1');
 
   // Layer 7: Fix missing closing brackets (truncation)
   s = closeBrackets(s);
@@ -775,7 +783,7 @@ function repairJSON(raw: string): string {
  * Add missing closing brackets to a potentially truncated JSON string.
  */
 function closeBrackets(s: string): string {
-  let depth = 0;
+  const stack: string[] = [];
   let inStr = false;
   let esc = false;
   for (const ch of s) {
@@ -783,11 +791,11 @@ function closeBrackets(s: string): string {
     if (ch === '\\' && inStr) { esc = true; continue; }
     if (ch === '"') { inStr = !inStr; continue; }
     if (inStr) continue;
-    if (ch === '{' || ch === '[') depth++;
-    if (ch === '}' || ch === ']') depth--;
+    if (ch === '{' || ch === '[') stack.push(ch);
+    if (ch === '}' || ch === ']') stack.pop();
   }
-  if (depth > 0) {
-    return s + '}'.repeat(depth);
+  if (stack.length > 0) {
+    return s + stack.reverse().map(c => c === '{' ? '}' : ']').join('');
   }
   return s;
 }
