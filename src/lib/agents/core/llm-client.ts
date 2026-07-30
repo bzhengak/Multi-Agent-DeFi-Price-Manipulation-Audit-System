@@ -16,7 +16,7 @@ export class LLMClient {
   constructor(options: LLMCallOptions = {}) {
     this.defaultOptions = {
       temperature: 0.1,
-      maxTokens: 8192,
+      maxTokens: 65536,
       topP: 0.9,
       maxRetries: 3,
       ...options,

@@ -23,7 +23,17 @@ export class SqliteStore {
   async init(): Promise<void> {
     if (this.db) return;
 
-    const SQL = await initSqlJs();
+    const wasmFile = path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+    if (!fs.existsSync(wasmFile)) {
+      console.warn(`[SQLite] WASM file not found at ${wasmFile}, trying alternative resolution`);
+    }
+    const SQL = await initSqlJs({
+      locateFile: (file: string) => {
+        const cwdPath = path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', file);
+        if (fs.existsSync(cwdPath)) return cwdPath;
+        return file;
+      },
+    });
 
     // Ensure directory exists
     const dir = path.dirname(this.dbPath);

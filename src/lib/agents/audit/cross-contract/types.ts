@@ -10,8 +10,10 @@ export interface CrossContractEdge {
   from: string;
   to: string;
   functionName: string;
-  callType: 'staticcall' | 'call' | 'delegatecall' | 'interface-call';
+  callType: 'staticcall' | 'call' | 'delegatecall' | 'interface-call' | 'runtime-interface-call';
   sourceLine: number;
+  /** Only present for runtime-interface-call edges — records the variable name and interface type */
+  runtimeVar?: { variableName: string; interfaceType: string };
 }
 
 export interface CrossContractGraph {

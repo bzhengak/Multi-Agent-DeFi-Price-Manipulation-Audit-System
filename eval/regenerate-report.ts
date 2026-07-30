@@ -5,8 +5,8 @@ import { loadNegativeCases } from './dataset/negatives';
 import { generateReport, saveReport } from './report';
 import type { EvalResult } from './types';
 
-const CHECKPOINT_PATH = join(__dirname, 'results', 'eval-checkpoint.bak.json');
-const CHECKPOINT_PATH_ALT = join(__dirname, 'results', 'eval-checkpoint.json');
+const CHECKPOINT_PATH = join(__dirname, 'results', 'eval-checkpoint-v2.json');
+const CHECKPOINT_PATH_ALT = join(__dirname, 'results', 'eval-checkpoint.bak.json');
 const BASELINE_CACHE_PATH = join(__dirname, 'results', 'baseline-results.json');
 
 interface EvalCheckpoint {

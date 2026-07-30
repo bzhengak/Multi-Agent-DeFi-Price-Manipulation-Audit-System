@@ -20,10 +20,10 @@ contract SimpleContract {
 `;
 
 describe('CrossContractTracer', () => {
-  it('parses simple contract without hardcoded external calls', async () => {
+  it('parses simple contract with runtime-variable interface call', async () => {
     const result = await tracer.trace(simpleContract, 'SimpleContract', 'ethereum');
     expect(result.nodeCount).toBe(1);
-    expect(result.edgeCount).toBe(0);
+    expect(result.edgeCount).toBe(1);
   });
 
   it('handles parse error gracefully', async () => {
@@ -32,8 +32,8 @@ describe('CrossContractTracer', () => {
     expect(result.edgeCount).toBe(0);
   });
 
-  it('builds prompt context for single contract', async () => {
+  it('builds prompt context for single contract with runtime call', async () => {
     const result = await tracer.trace(simpleContract, 'SimpleContract', 'ethereum');
-    expect(result.promptContext).toContain('No external contract dependencies');
+    expect(result.promptContext).toContain('External Interface Calls (Runtime Variables)');
   });
 });

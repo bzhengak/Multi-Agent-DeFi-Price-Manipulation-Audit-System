@@ -20,7 +20,22 @@ export interface EvalResult {
   partial?: boolean;
   error?: string;
   durationMs: number;
+  /** Whether this empty result is suspicious (likely missed detection vs genuine clean contract) */
+  suspect?: boolean;
+  /** Reason classification for empty or suspect results */
+  emptyReason?: EmptyResultReason;
 }
+
+/** Reasons a case produced zero or suspicious results */
+export type EmptyResultReason =
+  | 'genuine-clean'           // Low-risk source, LLM correctly found nothing
+  | 'high-risk-signals-2'     // 2 high-risk keywords in source, LLM found nothing
+  | 'high-risk-signals-3+'    // 3+ high-risk keywords in source, LLM found nothing
+  | 'proxy-contract'          // Source is proxy boilerplate (Fix D domain)
+  | 'runtime-var-calls-only'  // Only runtime-var interface calls (Fix B domain)
+  | 'no-external-calls'       // crossContractGraph empty, no runtime warnings
+  | 'quota-exhausted'         // LLM quota exhausted mid-analysis
+  | 'orchestrator-error';     // Orchestrator threw an error
 
 export interface CaseComparison {
   caseId: string;

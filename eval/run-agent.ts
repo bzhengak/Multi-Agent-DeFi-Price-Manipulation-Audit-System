@@ -6,7 +6,7 @@ import { QuotaExceededError } from '@/lib/llm';
 import type { BlockchainId } from '@/lib/blockchain/config';
 import { loadPositiveCases } from './dataset/positives';
 import { loadNegativeCases } from './dataset/negatives';
-import type { EvalCase, EvalResult } from './types';
+import type { EvalCase, EvalResult, EmptyResultReason } from './types';
 
 const CHECKPOINT_PATH = join(__dirname, 'results', 'eval-checkpoint.json');
 
@@ -16,7 +16,19 @@ interface EvalCheckpoint {
   negatives: EvalResult[];
   quotaExhausted: boolean;
   updatedAt: string;
+  suspectCount?: number;
+  suspectBreakdown?: Record<string, number>;
 }
+
+/** Keywords that make an empty result suspicious (LLM likely missed real vulnerabilities) */
+const HIGH_RISK_SIGNALS = [
+  'getReserves', 'getAmountOut', 'getAmountsIn', 'getAmountsOut',
+  'latestRoundData', 'latestAnswer', 'swap', 'mint', 'burn',
+  'onlyOwner', 'onlyAdmin', 'transferOwnership',
+  'call{value', 'delegatecall',
+  'IUniswapV2Pair', 'IUniswapV3Pool', 'IOracle', 'ICurvePool',
+  'AggregatorV3Interface',
+];
 
 function loadCheckpoint(): EvalCheckpoint | null {
   if (!existsSync(CHECKPOINT_PATH)) return null;
@@ -29,10 +41,25 @@ function loadCheckpoint(): EvalCheckpoint | null {
   }
 }
 
+function computeSuspectStats(cp: EvalCheckpoint): { suspectCount: number; suspectBreakdown: Record<string, number> } {
+  const all = [...cp.positives, ...cp.negatives];
+  const suspectCount = all.filter(r => r.suspect).length;
+  const suspectBreakdown: Record<string, number> = {};
+  for (const r of all) {
+    if (r.emptyReason) {
+      suspectBreakdown[r.emptyReason] = (suspectBreakdown[r.emptyReason] || 0) + 1;
+    }
+  }
+  return { suspectCount, suspectBreakdown };
+}
+
 function saveCheckpoint(cp: EvalCheckpoint): void {
   const tmp = CHECKPOINT_PATH + '.tmp';
   mkdirSync(dirname(CHECKPOINT_PATH), { recursive: true });
   cp.updatedAt = new Date().toISOString();
+  const suspect = computeSuspectStats(cp);
+  cp.suspectCount = suspect.suspectCount;
+  cp.suspectBreakdown = suspect.suspectBreakdown;
   writeFileSync(tmp, JSON.stringify(cp, null, 2), 'utf-8');
   renameSync(tmp, CHECKPOINT_PATH);
 }
@@ -52,18 +79,70 @@ function extractVulnerabilities(result: Awaited<ReturnType<AuditOrchestrator['ru
     const partial = result as PartialAuditResult;
     const vulns = partial.analysisResult?.vulnerabilities || [];
     return {
-      detectedPatternIds: vulns.map(v => v.patternId as string),
+      detectedPatternIds: [...new Set(vulns.map(v => v.patternId as string))],
       vulnerabilities: vulns,
     };
   }
   if ('analysisResult' in result) {
     const full = result as { analysisResult: { vulnerabilities: Array<{ patternId: string }> } };
     return {
-      detectedPatternIds: full.analysisResult.vulnerabilities.map(v => v.patternId),
+      detectedPatternIds: [...new Set(full.analysisResult.vulnerabilities.map(v => v.patternId))],
       vulnerabilities: full.analysisResult.vulnerabilities,
     };
   }
   return { detectedPatternIds: [], vulnerabilities: [] };
+}
+
+/**
+ * Analyze why an evaluation result is empty and determine if it's suspicious.
+ * Scans source code for high-risk signals, proxy boilerplate, and other indicators.
+ */
+function analyzeEmptyResult(sourceCode: string | undefined, error: string | undefined, partial: boolean | undefined): { suspect: boolean; emptyReason: EmptyResultReason } {
+  if (error) {
+    if (error.includes('quota') || error.includes('Quota')) {
+      return { suspect: true, emptyReason: 'quota-exhausted' };
+    }
+    return { suspect: true, emptyReason: 'orchestrator-error' };
+  }
+  if (partial) {
+    return { suspect: true, emptyReason: 'quota-exhausted' };
+  }
+
+  if (!sourceCode) {
+    return { suspect: true, emptyReason: 'no-external-calls' };
+  }
+
+  // Proxy contract detection: short delegatecall-based boilerplate
+  const proxyPatterns = ['delegatecall', 'implementation', 'DELEGATECALL'];
+  const proxyHits = proxyPatterns.filter(p => sourceCode.includes(p));
+  const totalLines = sourceCode.split('\n').length;
+  if (proxyHits.length >= 2 && totalLines < 80) {
+    return { suspect: true, emptyReason: 'proxy-contract' };
+  }
+
+  // Check for I<Interface>(nonLiteral) patterns — runtime-var interface calls
+  const runtimeVarPattern = /\bI[A-Z][a-zA-Z]*\s*\(\s*(?!0x[a-fA-F0-9]{40})[a-zA-Z_$][a-zA-Z0-9_$]*\s*\)/;
+  if (runtimeVarPattern.test(sourceCode)) {
+    return { suspect: true, emptyReason: 'runtime-var-calls-only' };
+  }
+
+  // Count high-risk signals
+  let signalCount = 0;
+  for (const signal of HIGH_RISK_SIGNALS) {
+    if (sourceCode.includes(signal)) {
+      signalCount++;
+    }
+  }
+
+  if (signalCount >= 3) {
+    return { suspect: true, emptyReason: 'high-risk-signals-3+' };
+  }
+  if (signalCount === 2) {
+    return { suspect: true, emptyReason: 'high-risk-signals-2' };
+  }
+
+  // No external calls detected in source, and low risk profile
+  return { suspect: false, emptyReason: 'genuine-clean' };
 }
 
 async function runSingleCase(evalCase: EvalCase): Promise<EvalResult> {
@@ -97,21 +176,32 @@ async function runSingleCase(evalCase: EvalCase): Promise<EvalResult> {
     }
 
     const { detectedPatternIds, vulnerabilities } = extractVulnerabilities(result);
+    const srcCode = fetchResult?.sourceCode;
+    const evalPartial = 'partial' in result && result.partial;
+    const suspectAnalysis = detectedPatternIds.length === 0
+      ? analyzeEmptyResult(srcCode, undefined, evalPartial)
+      : { suspect: false, emptyReason: undefined as EmptyResultReason | undefined };
     return {
       caseId: evalCase.caseId,
       detectedPatternIds,
       vulnerabilities,
-      sourceAvailable: !!fetchResult?.sourceCode,
-      partial: 'partial' in result && result.partial,
+      sourceAvailable: !!srcCode,
+      partial: evalPartial,
+      suspect: suspectAnalysis.suspect,
+      emptyReason: suspectAnalysis.emptyReason,
       durationMs: Date.now() - startTime,
     };
-  } catch (error) {
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : 'Unknown error';
+    const { suspect, emptyReason } = analyzeEmptyResult(undefined, errMsg, false);
     return {
       caseId: evalCase.caseId,
       detectedPatternIds: [],
       vulnerabilities: [],
       sourceAvailable: evalCase.sourceAvailable,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: errMsg,
+      suspect,
+      emptyReason,
       durationMs: Date.now() - startTime,
     };
   }
@@ -164,6 +254,8 @@ export async function runAllCases(): Promise<{ positives: EvalResult[]; negative
         vulnerabilities: [],
         sourceAvailable: evalCase.sourceAvailable,
         error: 'Skipped: LLM quota exhausted in previous case',
+        suspect: true,
+        emptyReason: 'quota-exhausted',
         durationMs: 0,
       });
       continue;
@@ -196,6 +288,8 @@ export async function runAllCases(): Promise<{ positives: EvalResult[]; negative
           vulnerabilities: [],
           sourceAvailable: evalCase.sourceAvailable,
           error: `LLM quota exhausted: ${(error as Error).message}`,
+          suspect: true,
+          emptyReason: 'quota-exhausted',
           durationMs: Date.now(),
         });
         completedIds.add(evalCase.caseId);
@@ -209,6 +303,8 @@ export async function runAllCases(): Promise<{ positives: EvalResult[]; negative
           vulnerabilities: [],
           sourceAvailable: evalCase.sourceAvailable,
           error: error instanceof Error ? error.message : 'Unknown error',
+          suspect: true,
+          emptyReason: 'orchestrator-error',
           durationMs: Date.now(),
         });
         completedIds.add(evalCase.caseId);
@@ -228,6 +324,8 @@ export async function runAllCases(): Promise<{ positives: EvalResult[]; negative
         vulnerabilities: [],
         sourceAvailable: evalCase.sourceAvailable,
         error: 'Skipped: LLM quota exhausted in previous case',
+        suspect: true,
+        emptyReason: 'quota-exhausted',
         durationMs: 0,
       });
       continue;
@@ -260,6 +358,8 @@ export async function runAllCases(): Promise<{ positives: EvalResult[]; negative
           vulnerabilities: [],
           sourceAvailable: evalCase.sourceAvailable,
           error: `LLM quota exhausted: ${(error as Error).message}`,
+          suspect: true,
+          emptyReason: 'quota-exhausted',
           durationMs: Date.now(),
         });
         completedIds.add(evalCase.caseId);
@@ -273,6 +373,8 @@ export async function runAllCases(): Promise<{ positives: EvalResult[]; negative
           vulnerabilities: [],
           sourceAvailable: evalCase.sourceAvailable,
           error: error instanceof Error ? error.message : 'Unknown error',
+          suspect: true,
+          emptyReason: 'orchestrator-error',
           durationMs: Date.now(),
         });
         completedIds.add(evalCase.caseId);
@@ -296,4 +398,72 @@ export async function runAllCases(): Promise<{ positives: EvalResult[]; negative
   }
 
   return { positives, negatives };
+}
+
+// === CLI entry point ===
+const isCLI = process.argv[1]?.replace(/\\/g, '/').includes('run-agent');
+if (require.main === module || isCLI) {
+  const args = process.argv.slice(2);
+  const singleIdx = args.indexOf('--single');
+
+  if (singleIdx !== -1 && args[singleIdx + 1]) {
+    runSingleAndSave(args[singleIdx + 1]).catch(console.error);
+  } else {
+    runAllCases().then(({ positives, negatives }) => {
+      console.log(`\nDone: ${positives.length} positive, ${negatives.length} negative`);
+    }).catch(console.error);
+  }
+}
+
+async function runSingleAndSave(caseId: string): Promise<void> {
+  const positives = loadPositiveCases();
+  const negatives = loadNegativeCases();
+  const allCases = [...positives, ...negatives];
+
+  const evalCase = allCases.find(c => c.caseId === caseId);
+  if (!evalCase) {
+    console.error(`Case "${caseId}" not found. Available: ${allCases.map(c => c.caseId).join(', ')}`);
+    process.exit(1);
+  }
+
+  const checkpoint = loadCheckpoint();
+  const completedIds = new Set(checkpoint?.completedIds || []);
+  const posResults = checkpoint?.positives || [];
+  const negResults = checkpoint?.negatives || [];
+  const quotaExhausted = checkpoint?.quotaExhausted || false;
+
+  if (completedIds.has(caseId)) {
+    console.log(`Case "${caseId}" already completed. Skipping.`);
+    return;
+  }
+
+  if (quotaExhausted) {
+    console.log('Previous run quota exhausted. Re-run without --single to handle quota cases.');
+    return;
+  }
+
+  const isPositive = positives.some(c => c.caseId === caseId);
+  console.log(`Running single case [${caseId}] (${isPositive ? 'positive' : 'negative'})...`);
+  const result = await runSingleCase(evalCase);
+
+  if (isPositive) {
+    posResults.push(result);
+  } else {
+    negResults.push(result);
+  }
+  completedIds.add(caseId);
+
+  saveCheckpoint({
+    completedIds: Array.from(completedIds),
+    positives: posResults,
+    negatives: negResults,
+    quotaExhausted: !!result.partial,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const status = result.error ? `ERROR: ${result.error}` : result.detectedPatternIds.join(', ') || 'none';
+  console.log(`\n✓ [${caseId}] detected: ${status} (${result.durationMs}ms)`);
+  if (result.partial) {
+    console.log('⚠ Partial — quota exhausted. Run without --single to continue remaining cases.');
+  }
 }

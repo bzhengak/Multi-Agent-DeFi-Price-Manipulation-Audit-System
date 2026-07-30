@@ -17,6 +17,53 @@ function fmtFpPatterns(patterns: Record<string, number>): string {
   return entries.map(([p, c]) => `${p}(${c})`).join(', ');
 }
 
+function buildSuspectTable(systemResults: { positives: EvalResult[]; negatives: EvalResult[] }): string {
+  const allResults = [...systemResults.positives, ...systemResults.negatives];
+  const suspectCases = allResults.filter((r: EvalResult) => r.suspect);
+  const emptyCases = allResults.filter((r: EvalResult) => r.detectedPatternIds.length === 0);
+
+  const breakdown: Record<string, number> = {};
+  for (const r of allResults) {
+    if (r.emptyReason) {
+      breakdown[r.emptyReason] = (breakdown[r.emptyReason] || 0) + 1;
+    }
+  }
+
+  const reasonLabels: Record<string, string> = {
+    'genuine-clean': 'Genuine Clean (low-risk source)',
+    'high-risk-signals-2': 'Suspect — 2 high-risk signals missed',
+    'high-risk-signals-3+': 'Suspect — 3+ high-risk signals missed',
+    'proxy-contract': 'Suspect — Proxy boilerplate returned',
+    'runtime-var-calls-only': 'Suspect — Runtime-var calls not resolved',
+    'no-external-calls': 'No external calls (empty graph)',
+    'quota-exhausted': 'Quota exhausted mid-analysis',
+    'orchestrator-error': 'Orchestrator error',
+  };
+
+  const suspectRows = Object.entries(breakdown)
+    .filter(([reason]) => reason !== 'genuine-clean')
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) =>
+      `| — ${reasonLabels[reason] || reason} | ${count} | — |`
+    ).join('\n');
+
+  const suspectTotal = suspectCases.length;
+  const genuineEmpty = emptyCases.filter((r: EvalResult) => !r.suspect).length;
+  const missedCount = systemResults.positives.filter((r: EvalResult) =>
+    r.suspect && r.emptyReason !== 'quota-exhausted' && r.emptyReason !== 'orchestrator-error'
+  ).length;
+
+  return `### 3.2 Suspect Analysis (Empty Result Diagnostics)
+
+| Category | Count | Description |
+|----------|:-----:|-------------|
+| **Suspect (likely miss)** | ${suspectTotal} | Results flagged where LLM may have missed real vulnerabilities |
+${suspectRows}
+| **Genuine empty** | ${genuineEmpty} | Results where LLM correctly found no vulnerabilities |
+
+> **Impact on Metrics**: Suspect cases represent potential missed detections. If all suspect cases were actual misses, the FN count would increase by ${missedCount}, lowering recall. This is the **worst-case** scenario. The suspect analysis provides a conservative upper bound on missed-detection rate.`;
+}
+
 export function generateReport(
   positiveCases: EvalCase[],
   negativeCases: EvalCase[],
@@ -199,19 +246,21 @@ A conservative lower bound uses the Rule of Three: \`h_upper = 3 / N_neg\` (95% 
 | Detection Discrimination Ratio | ${ddrStr} (${m.detectionDiscrimination.meanVulnerable.toFixed(1)} vs ${m.detectionDiscrimination.meanSafe.toFixed(1)}) | — | — | — |
 | Mean Jaccard | ${m.jaccardMean.value.toFixed(3)} | [${m.jaccardMean.ci[0].toFixed(3)}, ${m.jaccardMean.ci[1].toFixed(3)}] | ${rlJac} | ${slJac} |
 
-### 3.2 Positive Cases — Detection Results (Table 1)
+${buildSuspectTable(systemResults)}
+
+### 3.3 Positive Cases — Detection Results (Table 1)
 
 ${positivesTable(systemResults.positives, systemMetrics)}
 
-### 3.3 Negative Cases — False Positive Results (Table 2)
+### 3.4 Negative Cases — False Positive Results (Table 2)
 
 ${negativesTable(systemResults.negatives)}
 
-### 3.4 Per-Pattern Recall & Precision (Table 3)
+### 3.5 Per-Pattern Recall & Precision (Table 3)
 
 ${perPatternTable(systemMetrics)}
 
-### 3.5 FP Categorization Analysis
+### 3.6 FP Categorization Analysis
 
 The ${m.fpCategorization.total} exploit-unmatched detections ("FPs") are categorized by theoretical plausibility:
 
@@ -223,7 +272,7 @@ The ${m.fpCategorization.total} exploit-unmatched detections ("FPs") are categor
 
 **Key insight**: The Safe-Contract Precision of ${fmtPct(m.safeContractPrecision.value)} (0 FP on ${m.safeContractPrecision.totalContracts} audited safe contracts) demonstrates that the system does **not** hallucinate vulnerability patterns on well-defended code. The additional detections on vulnerable contracts are therefore more likely to represent real but unexploited vulnerabilities than random false positives.
 
-### 3.6 Zero-case patterns
+### 3.7 Zero-case patterns
 Patterns with zero cases in the positive set (not evaluated):
 
 | Pattern | Category |
@@ -233,7 +282,7 @@ ${Array.from(new Set([
   ...Array.from(systemMetrics.perPatternPrecision.filter(p => p.nDetected === 0).map(p => p.patternId)),
 ])).sort().map(id => `| ${id} | Not covered — no ground-truth case in dataset, listed as Future Work |`).join('\n')}
 
-### 3.7 Slither Baseline Notes
+### 3.8 Slither Baseline Notes
 Slither is only compared on patterns it can detect: TO-03 (reentrancy), AC-01 (access control), CR-03 (unchecked return). All other patterns are N/A for Slither.
 
 ## 4. Discussion

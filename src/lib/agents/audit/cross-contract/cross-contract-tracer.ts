@@ -16,6 +16,16 @@ const KNOWN_INTERFACES = [
   'AggregatorV3Interface',
 ];
 
+/** Interfaces whose runtime-variable calls trigger warning edges for OD-01/CR-01/CR-04 */
+const PRICE_SENSITIVE_INTERFACES = [
+  'IERC20', 'IUniswapV2Pair', 'IUniswapV3Pool', 'IOracle', 'IPool',
+  'IAaveV3Pool', 'ICurvePool', 'IBalancerVault',
+  'AggregatorV3Interface', 'IPriceFeed', 'ISwapRouter',
+];
+
+/** Sentinel address for runtime-variable interface calls (not a real contract) */
+const RUNTIME_VAR_SENTINEL = '0x0000000000000000000000000000000000000001';
+
 export class CrossContractTracer {
   private visited = new Set<string>();
   private nodes: CrossContractNode[] = [];
@@ -84,6 +94,12 @@ export class CrossContractTracer {
       if (this.nodes.length >= MAX_NODES) {
         this.truncated = true;
         break;
+      }
+
+      // Runtime-variable interface calls cannot be resolved statically — record edge without fetch
+      if (call.callType === 'runtime-interface-call') {
+        this.edges.push(call);
+        continue;
       }
 
       const targetAddr = call.to;
@@ -159,6 +175,19 @@ export class CrossContractTracer {
                   callType: 'interface-call',
                   sourceLine: node.loc?.start?.line || 0,
                 });
+              } else if (PRICE_SENSITIVE_INTERFACES.includes(typeName)) {
+                // Address is a runtime variable (state var / parameter) — emit warning edge
+                const varName = this.extractVarNameFromArgs(expr.expression.arguments);
+                if (varName) {
+                  edges.push({
+                    from: fromAddress,
+                    to: RUNTIME_VAR_SENTINEL,
+                    functionName: `${typeName}.${expr.memberName}()`,
+                    callType: 'runtime-interface-call',
+                    sourceLine: node.loc?.start?.line || 0,
+                    runtimeVar: { variableName: varName, interfaceType: typeName },
+                  });
+                }
               }
             }
           }
@@ -167,6 +196,23 @@ export class CrossContractTracer {
     });
 
     return edges;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private extractVarNameFromArgs(args: any[]): string | null {
+    if (!args || args.length === 0) return null;
+    const firstArg = args[0];
+    if (firstArg?.type === 'Identifier') {
+      return firstArg.name;
+    }
+    // Handle IUniswapV2Pair(address(stateVar)) double wrapping
+    if (firstArg?.type === 'FunctionCall' && firstArg.expression?.type === 'Identifier' && firstArg.expression?.name === 'address') {
+      const innerArg = firstArg.arguments?.[0];
+      if (innerArg?.type === 'Identifier') {
+        return innerArg.name;
+      }
+    }
+    return null;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -216,49 +262,74 @@ export class CrossContractTracer {
   }
 
   private buildPromptContext(graph: CrossContractGraph): string {
-    if (graph.nodes.length <= 1) {
+    const runtimeEdges = graph.edges.filter(e => e.callType === 'runtime-interface-call');
+    const resolvedEdges = graph.edges.filter(e => e.callType !== 'runtime-interface-call');
+
+    // No known external dependencies at all
+    if (graph.nodes.length <= 1 && runtimeEdges.length === 0) {
       return 'No external contract dependencies detected.';
     }
 
     const sections: string[] = [];
-    sections.push('## Cross-Contract Dependency Graph');
-    sections.push(`Detected ${graph.nodes.length} contracts and ${graph.edges.length} external calls (max depth: ${graph.maxDepth}).${graph.truncated ? ' [TRUNCATED]' : ''}`);
-    sections.push('');
 
-    sections.push('### Contracts:');
-    graph.nodes.forEach((node, i) => {
-      const role = node.protocolRole ? ` [${node.protocolRole}]` : '';
-      const src = node.source === 'main' ? '(main contract)' : node.source === 'unknown' ? '(source unavailable)' : '(verified)';
-      sections.push(`[${i}] ${node.contractName} at ${node.address} ${src}${role}`);
-    });
-
-    if (graph.edges.length > 0) {
-      sections.push('');
-      sections.push('### External Calls:');
-      graph.edges.forEach(edge => {
-        const fromNode = graph.nodes.find(n => n.address.toLowerCase() === edge.from.toLowerCase());
-        const toNode = graph.nodes.find(n => n.address.toLowerCase() === edge.to.toLowerCase());
-        const fromName = fromNode?.contractName || edge.from;
-        const toName = toNode?.contractName || edge.to;
-        sections.push(`- ${fromName} → ${toName}.${edge.functionName}() [${edge.callType}] (line ${edge.sourceLine})`);
+    // Runtime-variable warning (even without resolved external calls)
+    if (runtimeEdges.length > 0) {
+      sections.push('## ⚠ External Interface Calls (Runtime Variables)');
+      sections.push('These calls use addresses stored in state variables or parameters — cannot be statically resolved:');
+      runtimeEdges.forEach(edge => {
+        const varInfo = edge.runtimeVar
+          ? `(\`${edge.runtimeVar.variableName}\`: ${edge.runtimeVar.interfaceType})`
+          : '';
+        sections.push(`- \`${edge.functionName}\` at line ${edge.sourceLine} ${varInfo}`);
       });
+      sections.push('');
+      sections.push('These dynamic addresses could point to price-sensitive contracts. Recommend manual verification.');
+      sections.push('Please pay special attention to **OD-01** (spot price), **CR-01** (external price source), and **CR-04** (cross-protocol price dependency).');
+      sections.push('');
     }
 
-    const externalNodes = graph.nodes.filter(n => n.source !== 'main' && n.sourceCode);
-    if (externalNodes.length > 0) {
+    if (graph.nodes.length > 1) {
+      sections.push('## Cross-Contract Dependency Graph');
+      sections.push(`Detected ${graph.nodes.length} contracts and ${resolvedEdges.length} external calls (max depth: ${graph.maxDepth}).${graph.truncated ? ' [TRUNCATED]' : ''}`);
       sections.push('');
-      sections.push('### External Contract Source Fragments:');
-      externalNodes.forEach((node) => {
-        const idx = graph.nodes.indexOf(node);
-        sections.push(`[${idx}] ${node.contractName} (${node.address}):`);
-        sections.push('```solidity');
-        sections.push(node.sourceCode || '// Source unavailable');
-        sections.push('```');
+
+      sections.push('### Contracts:');
+      graph.nodes.forEach((node, i) => {
+        const role = node.protocolRole ? ` [${node.protocolRole}]` : '';
+        const src = node.source === 'main' ? '(main contract)' : node.source === 'unknown' ? '(source unavailable)' : '(verified)';
+        sections.push(`[${i}] ${node.contractName} at ${node.address} ${src}${role}`);
       });
+
+      if (resolvedEdges.length > 0) {
+        sections.push('');
+        sections.push('### External Calls:');
+        resolvedEdges.forEach(edge => {
+          const fromNode = graph.nodes.find(n => n.address.toLowerCase() === edge.from.toLowerCase());
+          const toNode = graph.nodes.find(n => n.address.toLowerCase() === edge.to.toLowerCase());
+          const fromName = fromNode?.contractName || edge.from;
+          const toName = toNode?.contractName || edge.to;
+          sections.push(`- ${fromName} → ${toName}.${edge.functionName}() [${edge.callType}] (line ${edge.sourceLine})`);
+        });
+      }
+
+      const externalNodes = graph.nodes.filter(n => n.source !== 'main' && n.sourceCode);
+      if (externalNodes.length > 0) {
+        sections.push('');
+        sections.push('### External Contract Source Fragments:');
+        externalNodes.forEach((node) => {
+          const idx = graph.nodes.indexOf(node);
+          sections.push(`[${idx}] ${node.contractName} (${node.address}):`);
+          sections.push('```solidity');
+          sections.push(node.sourceCode || '// Source unavailable');
+          sections.push('```');
+        });
+      }
     }
 
-    sections.push('');
-    sections.push('Please pay special attention to CR-01 through CR-04 cross-protocol price dependency vulnerabilities.');
+    if (!sections.some(s => s.includes('Please pay special attention'))) {
+      sections.push('');
+      sections.push('Please pay special attention to CR-01 through CR-04 cross-protocol price dependency vulnerabilities.');
+    }
 
     return sections.join('\n');
   }

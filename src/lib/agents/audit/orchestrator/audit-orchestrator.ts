@@ -20,8 +20,68 @@ import type { BlockchainId } from '@/lib/blockchain/config';
 
 export interface OrchestratorProgress {
   stage: string;
+  stageLabel?: string;
   progress: number;
   details?: string;
+  elapsedMs?: number;
+  iteration?: number;
+  maxIterations?: number;
+  findingsCount?: number;
+  foundPatterns?: string[];
+  severityCounts?: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
+  convergenceDelta?: number;
+  classification?: {
+    type: string;
+    confidence: number;
+    manipulationTarget: string;
+    priorityVulnerabilities: string[];
+    riskProfile: {
+      manipulationRisk: string;
+      flashloanExposure: boolean;
+      oracleDependency: boolean;
+      liquiditySensitivity: string;
+    };
+  };
+  contextBuildings?: {
+    relatedPatternCount: number;
+    relatedCaseCount: number;
+    focusAreas: string[];
+    crossContractNodeCount: number;
+    crossContractEdgeCount: number;
+    externalDependencies: Array<{
+      address: string;
+      contractName: string;
+      protocolRole?: string;
+      callType: string;
+      sourceLine: number;
+    }>;
+  };
+  reconstructionStats?: {
+    totalAttacks: number;
+    highFeasibility: number;
+    combinedChainCount: number;
+  };
+  costStats?: {
+    estimatedCount: number;
+    totalCount: number;
+    sampleCosts: Array<{
+      patternId: string;
+      rangeLow: number;
+      rangeHigh: number;
+    }>;
+  };
+  calibrationStats?: {
+    overallConfidence: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
+  error?: string;
 }
 
 export type ProgressCallback = (progress: OrchestratorProgress) => void;
@@ -116,8 +176,8 @@ export class AuditOrchestrator {
     this.contextManager = new ContextManager();
     this.reconstructor = new PriceManipulationReconstructor();
     this.calibrator = new ConfidenceCalibrator();
-    this.llm = new LLMClient({ maxRetries: 3, temperature: 0.1, maxTokens: 8192 });
-    this.fastLlm = new LLMClient({ provider: 'fast', maxRetries: 2, temperature: 0.1, maxTokens: 8192 });
+    this.llm = new LLMClient({ maxRetries: 3, temperature: 0.1, maxTokens: 65536 });
+    this.fastLlm = new LLMClient({ provider: 'fast', maxRetries: 2, temperature: 0.1, maxTokens: 65536 });
     this.onProgress = onProgress;
     this.totalTimeout = totalTimeout;
     this.stageBudgets = { ...DEFAULT_STAGE_BUDGETS, ...stageBudgets };
@@ -186,10 +246,29 @@ export class AuditOrchestrator {
 
     // Step 1: Protocol Detection
     try {
-      this.emit({ stage: 'protocol_detection', progress: 5, details: 'Identifying protocol type...' });
+      const stageStart = Date.now();
+      this.emit({ stage: 'protocol_detection', stageLabel: '协议识别中', progress: 5, details: '正在识别合约协议类型...', elapsedMs: Date.now() - startTime });
       classification = await this.runStage('protocol_detection', async () => this.detector.detect(sourceCode));
       completedStages.push('protocol_detection');
-      this.emit({ stage: 'protocol_detection', progress: 10, details: `Detected: ${classification!.type} (confidence: ${classification!.confidence})` });
+      this.emit({
+        stage: 'protocol_detection',
+        stageLabel: '协议识别完成',
+        progress: 10,
+        details: `检测结果: ${classification!.type}（置信度: ${Math.round(classification!.confidence * 100)}%）`,
+        elapsedMs: Date.now() - startTime,
+        classification: {
+          type: classification!.type,
+          confidence: classification!.confidence,
+          manipulationTarget: classification!.manipulationTarget,
+          priorityVulnerabilities: classification!.priorityVulnerabilities,
+          riskProfile: {
+            manipulationRisk: classification!.riskProfile.manipulationRisk,
+            flashloanExposure: classification!.riskProfile.flashloanExposure,
+            oracleDependency: classification!.riskProfile.oracleDependency,
+            liquiditySensitivity: classification!.riskProfile.liquiditySensitivity,
+          },
+        },
+      });
     } catch (error) {
       if (error instanceof QuotaExceededError) {
         return this.buildPartialResult(completedStages, 'protocol_detection', error.message, classification, analysisResult, reconstruction, calibratedResult, reportMarkdown);
@@ -199,36 +278,130 @@ export class AuditOrchestrator {
 
     // Step 2: Context Build
     try {
-      this.emit({ stage: 'context_building', progress: 15, details: 'Building analysis context with cross-contract tracing...' });
+      this.emit({ stage: 'context_building', stageLabel: '上下文构建中', progress: 15, details: '正在构建分析上下文 + 追踪跨合约依赖...', elapsedMs: Date.now() - startTime });
       const context = await this.runStage('context_building', () =>
         this.contextManager.build(sourceCode, contractName, blockchain, classification!, address, 'deep'),
       );
       completedStages.push('context_building');
-      this.emit({ stage: 'context_building', progress: 18, details: `Context built. Cross-contract nodes: ${context.crossContractGraph?.nodeCount ?? 0}` });
+      const graph = context.crossContractGraph;
+      const deps = (graph?.graph?.edges ?? []).map(edge => {
+        const toNode = graph?.graph?.nodes?.find(n => n.address?.toLowerCase() === edge.to?.toLowerCase());
+        return {
+          address: edge.to,
+          contractName: toNode?.contractName || edge.to.slice(0, 10) + '...',
+          protocolRole: toNode?.protocolRole,
+          callType: edge.callType,
+          sourceLine: edge.sourceLine,
+        };
+      });
+      this.emit({
+        stage: 'context_building',
+        stageLabel: '上下文构建完成',
+        progress: 20,
+        details: `已加载 ${context.relevantPatterns.length} 个相关漏洞模式、${context.relevantCases.length} 个历史案例`,
+        elapsedMs: Date.now() - startTime,
+        contextBuildings: {
+          relatedPatternCount: context.relevantPatterns.length,
+          relatedCaseCount: context.relevantCases.length,
+          focusAreas: context.focusAreas,
+          crossContractNodeCount: graph?.nodeCount ?? 0,
+          crossContractEdgeCount: graph?.edgeCount ?? 0,
+          externalDependencies: deps,
+        },
+      });
 
       // Step 3: Vulnerability Analysis
       const topPatternId = classification!.priorityVulnerabilities[0] ?? 'OD-01';
       const budget = computeBudget(classification!, topPatternId, null);
-      this.emit({ stage: 'vulnerability_analysis', progress: 20, details: `Running multi-round vulnerability analysis (budget: ${budget.maxIterations} iterations, confidence threshold: ${budget.confidenceThreshold})...` });
-      const vulnAgent = new VulnerabilityAnalysisAgent(sourceCode, contractName, blockchain, address, budget.maxIterations);
+      this.emit({
+        stage: 'vulnerability_analysis',
+        stageLabel: '漏洞分析中',
+        progress: 22,
+        details: `即将启动 ${budget.maxIterations} 轮迭代分析（置信度阈值: ${budget.confidenceThreshold}）`,
+        elapsedMs: Date.now() - startTime,
+        iteration: 1,
+        maxIterations: budget.maxIterations,
+        findingsCount: 0,
+      });
+      const vulnAgent = new VulnerabilityAnalysisAgent(
+        sourceCode, contractName, blockchain, address, budget.maxIterations, true,
+        (ip) => {
+          this.emit({
+            stage: 'vulnerability_analysis',
+            stageLabel: '漏洞分析中',
+            progress: 22 + Math.round((ip.iteration / budget.maxIterations) * 28),
+            details: ip.iteration < ip.maxIterations
+              ? `第 ${ip.iteration}/${budget.maxIterations} 轮分析中 | 已发现 ${ip.findingsCount} 个漏洞`
+              : `分析完成 | 共发现 ${ip.findingsCount} 个漏洞`,
+            elapsedMs: (Date.now() - startTime),
+            iteration: ip.iteration,
+            maxIterations: budget.maxIterations,
+            findingsCount: ip.findingsCount,
+            foundPatterns: ip.foundPatterns,
+            severityCounts: {
+              critical: ip.severityCounts['Critical'] || 0,
+              high: ip.severityCounts['High'] || 0,
+              medium: ip.severityCounts['Medium'] || 0,
+              low: (ip.severityCounts['Low'] || 0) + (ip.severityCounts['Informational'] || 0),
+            },
+            convergenceDelta: ip.convergenceDelta,
+          });
+        },
+      );
       const agentResult = await this.runStage('vulnerability_analysis', () => vulnAgent.run());
+      const agentError = (agentResult.data as { error?: string })?.error;
+      if (agentError) {
+        throw new Error(`Vulnerability agent failed: ${agentError}`);
+      }
       analysisResult = (agentResult.data as { analysisResult: VulnerabilityAnalysisResult }).analysisResult;
+      if (!analysisResult) {
+        throw new Error('Vulnerability agent returned no analysis result');
+      }
       const iterationCount = (agentResult.data as { iterationCount: number }).iterationCount;
       codeTruncated = (agentResult.data as { codeTruncated?: boolean }).codeTruncated ?? false;
       codeTruncationRatio = (agentResult.data as { codeTruncationRatio?: number }).codeTruncationRatio ?? 0;
-      completedStages.push('vulnerability_analysis');
-      this.emit({ stage: 'vulnerability_analysis', progress: 50, details: `Found ${analysisResult.vulnerabilities.length} vulnerabilities in ${iterationCount} iterations${codeTruncated ? ' [CODE TRUNCATED]' : ''}` });
+completedStages.push('vulnerability_analysis');
+      const sevCounts = {
+        critical: analysisResult.vulnerabilities.filter(v => v.severity === 'Critical').length,
+        high: analysisResult.vulnerabilities.filter(v => v.severity === 'High').length,
+        medium: analysisResult.vulnerabilities.filter(v => v.severity === 'Medium').length,
+        low: analysisResult.vulnerabilities.filter(v => v.severity === 'Low' || v.severity === 'Informational').length,
+      };
+      const allPatterns = [...new Set(analysisResult.vulnerabilities.map(v => v.patternId))];
+      this.emit({
+        stage: 'vulnerability_analysis',
+        stageLabel: '漏洞分析完成',
+        progress: 50,
+        details: `共 ${iterationCount} 轮迭代，发现 ${analysisResult.vulnerabilities.length} 个漏洞`,
+        elapsedMs: Date.now() - startTime,
+        iteration: iterationCount,
+        maxIterations: budget.maxIterations,
+        findingsCount: analysisResult.vulnerabilities.length,
+        foundPatterns: allPatterns,
+        severityCounts: sevCounts,
+      });
 
       // Step 4: Attack Reconstruction
-      this.emit({ stage: 'attack_reconstruction', progress: 55, details: 'Reconstructing attack scenarios...' });
+      this.emit({ stage: 'attack_reconstruction', stageLabel: '攻击重建中', progress: 55, details: '正在重建攻击场景与资金流向...', elapsedMs: Date.now() - startTime });
       reconstruction = await this.runStage('attack_reconstruction', () =>
         this.reconstructor.reconstruct(analysisResult!.vulnerabilities, classification!),
       );
       completedStages.push('attack_reconstruction');
-      this.emit({ stage: 'attack_reconstruction', progress: 70, details: `${reconstruction!.summary.totalAttacks} attacks reconstructed, ${reconstruction!.combinedAttackChains.length} combined chains` });
+      this.emit({
+        stage: 'attack_reconstruction',
+        stageLabel: '攻击重建完成',
+        progress: 70,
+        details: `${reconstruction!.summary.totalAttacks} 个攻击场景、${reconstruction!.combinedAttackChains.length} 条组合攻击链`,
+        elapsedMs: Date.now() - startTime,
+        reconstructionStats: {
+          totalAttacks: reconstruction!.summary.totalAttacks,
+          highFeasibility: reconstruction!.summary.highFeasibility,
+          combinedChainCount: reconstruction!.combinedAttackChains.length,
+        },
+      });
 
       // Step 5: Cost Estimation
-      this.emit({ stage: 'cost_estimation', progress: 72, details: 'Estimating attack costs...' });
+      this.emit({ stage: 'cost_estimation', stageLabel: '成本估算中', progress: 72, details: '正在估算攻击成本...', elapsedMs: Date.now() - startTime });
       const costRegistry = getCostRegistry();
       const costEstimates: Record<string, AttackCostEstimate> = {};
       for (const vuln of analysisResult!.vulnerabilities) {
@@ -244,23 +417,52 @@ export class AuditOrchestrator {
       }
       completedStages.push('cost_estimation');
       const costCount = Object.keys(costEstimates).length;
-      this.emit({ stage: 'cost_estimation', progress: 75, details: `Costs estimated for ${costCount}/${analysisResult!.vulnerabilities.length} vulnerabilities` });
+      const sampleCosts = Object.entries(costEstimates).slice(0, 4).map(([vid, est]) => {
+        const v = analysisResult!.vulnerabilities.find(p => p.id === vid);
+        return { patternId: v?.patternId ?? 'unknown', rangeLow: est.low, rangeHigh: est.high };
+      });
+      this.emit({
+        stage: 'cost_estimation',
+        stageLabel: '成本估算完成',
+        progress: 75,
+        details: `已估算 ${costCount}/${analysisResult!.vulnerabilities.length} 个漏洞的攻击成本`,
+        elapsedMs: Date.now() - startTime,
+        costStats: { estimatedCount: costCount, totalCount: analysisResult!.vulnerabilities.length, sampleCosts },
+      });
 
       // Step 6: Confidence Calibration
-      this.emit({ stage: 'confidence_calibration', progress: 75, details: 'Calibrating confidence scores...' });
+      this.emit({ stage: 'confidence_calibration', stageLabel: '置信度校准中', progress: 75, details: '正在评估分析结果可信度...', elapsedMs: Date.now() - startTime });
       calibratedResult = await this.runStage('confidence_calibration', async () =>
         this.calibrator.calibrate(analysisResult!.vulnerabilities, reconstruction!, classification!, iterationCount, true),
       );
       completedStages.push('confidence_calibration');
-      this.emit({ stage: 'confidence_calibration', progress: 80, details: `Overall confidence: ${calibratedResult!.overallConfidence}` });
+      this.emit({
+        stage: 'confidence_calibration',
+        stageLabel: '置信度校准完成',
+        progress: 80,
+        details: `整体置信度: ${Math.round(calibratedResult!.overallConfidence * 100)}%`,
+        elapsedMs: Date.now() - startTime,
+        calibrationStats: {
+          overallConfidence: calibratedResult!.overallConfidence,
+          high: calibratedResult!.calibrationSummary.high,
+          medium: calibratedResult!.calibrationSummary.medium,
+          low: calibratedResult!.calibrationSummary.low,
+        },
+      });
 
       // Step 7: Report Generation (uses fast provider)
-      this.emit({ stage: 'report_generation', progress: 85, details: 'Generating audit report...' });
+      this.emit({ stage: 'report_generation', stageLabel: '报告生成中', progress: 85, details: 'AI正在撰写增强版审计报告...', elapsedMs: Date.now() - startTime });
       reportMarkdown = await this.runStage('report_generation', () =>
         this.generateEnhancedReport(analysisResult!, reconstruction!, calibratedResult!, classification!, contractName, blockchain, address, codeTruncated, codeTruncationRatio),
       );
       completedStages.push('report_generation');
-      this.emit({ stage: 'report_generation', progress: 95, details: `Report generated${codeTruncated ? ' [CODE TRUNCATED]' : ''}` });
+      this.emit({
+        stage: 'report_generation',
+        stageLabel: '报告生成完成',
+        progress: 95,
+        details: codeTruncated ? `报告已生成 [代码已被截断]` : `报告已生成`,
+        elapsedMs: Date.now() - startTime,
+      });
     } catch (error) {
       if (error instanceof QuotaExceededError) {
         const failedStage = this.detectFailedStage(completedStages);
@@ -283,7 +485,13 @@ export class AuditOrchestrator {
       combinedAttackChains: reconstruction!.combinedAttackChains.length,
     };
 
-    this.emit({ stage: 'completed', progress: 100, details: `Audit complete in ${Date.now() - startTime}ms` });
+    this.emit({
+    stage: 'completed',
+    stageLabel: '分析完成',
+    progress: 100,
+    details: `审计完成，耗时 ${Math.round((Date.now() - startTime) / 1000)}秒`,
+    elapsedMs: Date.now() - startTime,
+  });
 
     // Learning evolution: ingest audit result into history.json (skipped in EVAL_MODE)
     if (process.env.EVAL_MODE !== 'true') {

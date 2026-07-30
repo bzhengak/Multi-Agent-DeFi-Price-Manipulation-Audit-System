@@ -34,7 +34,7 @@ const LLM_CONFIG = {
   topP: 0.9,
   // Raised for thinking mode: reasoning tokens take significantly longer to generate.
   // Non-thinking calls finish well before this limit.
-  timeout: 1_200_000,
+  timeout: 3_600_000,
 };
 
 // ─── Provider type ───────────────────────────────────────────────────────────
@@ -515,6 +515,11 @@ export async function getStructuredJSONResponse<T>(
   provider?: LLMProvider,
 ): Promise<T> {
   const config = { ...LLM_CONFIG, ...options };
+  // Safety guard: thinking mode needs room for reasoning + JSON output.
+  // Override any caller-supplied maxTokens that's too small.
+  if (shouldEnableThinking(provider)) {
+    config.maxTokens = Math.max(config.maxTokens, 32768);
+  }
   const model = provider ? getModelForProvider(provider) : config.model;
   const configWithModel = { ...config, model };
   const modelLower = model?.toLowerCase() || '';

@@ -5,7 +5,7 @@ import type { BlockchainId } from '@/lib/blockchain/config';
 import { loadPositiveCases } from './dataset/positives';
 import { loadNegativeCases } from './dataset/negatives';
 import type { EvalCase, EvalResult } from './types';
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync, mkdtempSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
@@ -13,7 +13,7 @@ import { tmpdir } from 'os';
 const BASELINE_CACHE_PATH = join(__dirname, 'results', 'baseline-results.json');
 
 // === Raw LLM Baseline ===
-async function runRawLlm(evalCase: EvalCase): Promise<EvalResult> {
+export async function runRawLlm(evalCase: EvalCase): Promise<EvalResult> {
   const startTime = Date.now();
   try {
     const fetchResult = await fetchContractWithCache(
@@ -31,7 +31,7 @@ async function runRawLlm(evalCase: EvalCase): Promise<EvalResult> {
       };
     }
 
-    const llm = new LLMClient({ maxRetries: 2, temperature: 0.1, maxTokens: 8192 });
+    const llm = new LLMClient({ maxRetries: 2, temperature: 0.1, maxTokens: 65536 });
     const userPrompt = `Analyze the following smart contract for price manipulation vulnerabilities.\n\n## Contract: ${evalCase.contractName}\n## Blockchain: ${evalCase.blockchain}\n\n## Source Code\n${fetchResult.sourceCode}\n\nPlease output the complete analysis results in the specified JSON format.`;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,6 +59,26 @@ async function runRawLlm(evalCase: EvalCase): Promise<EvalResult> {
 }
 
 // === Slither Baseline ===
+
+/** Map pragma version string to the nearest installed solc version */
+const INSTALLED_VERSIONS = [
+  '0.8.35', '0.8.27', '0.8.25', '0.8.22', '0.8.19',
+  '0.8.0', '0.7.6', '0.6.12', '0.5.17', '0.4.24',
+];
+
+function detectSolcVersion(sourceCode: string): string {
+  const match = sourceCode.match(/pragma\s+solidity\s+(?:\^|>=|~)?\s*(\d+\.\d+)(?:\.\d+)?/);
+  if (!match) return '0.8.35';
+  const reqVer = match[1]; // e.g. "0.8"
+  // Pick the highest installed version that satisfies the pragma
+  for (const v of INSTALLED_VERSIONS) {
+    if (v.startsWith(reqVer + '.') || v.startsWith(reqVer)) {
+      return v;
+    }
+  }
+  return '0.8.35';
+}
+
 const SLITHER_TO_PATTERN: Record<string, string[]> = {
   'reentrancy-eth': ['TO-03'],
   'reentrancy-no-eth': ['TO-03'],
@@ -70,7 +90,7 @@ const SLITHER_TO_PATTERN: Record<string, string[]> = {
   'unchecked-send': ['CR-03'],
 };
 
-async function runSlither(evalCase: EvalCase): Promise<EvalResult> {
+export async function runSlither(evalCase: EvalCase): Promise<EvalResult> {
   const startTime = Date.now();
   try {
     const fetchResult = await fetchContractWithCache(
@@ -91,18 +111,47 @@ async function runSlither(evalCase: EvalCase): Promise<EvalResult> {
     const tmpDir = mkdtempSync(join(tmpdir(), 'slither-'));
     const solFile = join(tmpDir, `${evalCase.caseId}.sol`);
     writeFileSync(solFile, fetchResult.sourceCode);
+    const jsonOut = join(tmpDir, 'slither-out.json');
 
-    const slitherOutput = await new Promise<string>((resolve, reject) => {
-      const proc = spawn('slither', [solFile, '--json', '-', '--disable-color']);
-      let stdout = '';
-      proc.stdout.on('data', d => (stdout += d.toString()));
-      proc.on('close', () => resolve(stdout));
-      proc.on('error', reject);
-      setTimeout(() => proc.kill('SIGKILL'), 30_000);
+    // Detect the best solc version from pragma and set env var
+    const solcVersion = detectSolcVersion(fetchResult.sourceCode);
+    const env = { ...process.env, SOLC_VERSION: solcVersion };
+
+    let closeCode: number | null = null;
+    let proc: ChildProcess | null = null;
+    await new Promise<void>((resolve, reject) => {
+      proc = spawn('python', ['-m', 'slither', solFile, '--json', jsonOut, '--disable-color'], { shell: true, env });
+      let stderr = '';
+      proc.stderr.on('data', d => (stderr += d.toString()));
+      const timer = setTimeout(() => {
+        proc!.kill('SIGKILL');
+        proc!.kill('SIGTERM');
+        reject(new Error('Slither timed out (60s)'));
+      }, 60_000);
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        closeCode = code;
+        // Windows: Slither may return exit code -1 (4294967295 unsigned)
+        // even when analysis succeeds. Always attempt to read JSON output.
+        resolve();
+      });
+      proc.on('error', (err) => { clearTimeout(timer); reject(err); });
     });
 
-    const parsed = JSON.parse(slitherOutput);
-    const detectors = parsed?.result?.detectors || [];
+    let detectors: any[] = [];
+    try {
+      if (!existsSync(jsonOut)) {
+        throw new Error(`JSON output missing (exit code ${closeCode})`);
+      }
+      const raw = readFileSync(jsonOut, 'utf-8');
+      const parsed = JSON.parse(raw);
+      detectors = parsed?.results?.detectors || parsed?.result?.detectors || [];
+    } catch (e) {
+      if (closeCode !== 0 && closeCode !== null) {
+        throw new Error(`Slither exited with code ${closeCode} and no usable output: ${e instanceof Error ? e.message : 'unknown'}`);
+      }
+      // If exit code was 0 or indeterminate but JSON is missing, return empty
+    }
 
     const detected = new Set<string>();
     for (const det of detectors) {
@@ -181,4 +230,12 @@ export async function runAllBaselines(useCache = true): Promise<{
   console.log('  Baselines cached to baseline-results.json');
 
   return result;
+}
+
+// Auto-execute when run directly via `bun run eval/run-baselines.ts`
+if (import.meta.main) {
+  runAllBaselines(false).then(r => {
+    console.log(`\nDone. Raw LLM: ${r.rawLlm.positives.length} pos + ${r.rawLlm.negatives.length} neg`);
+    console.log(`Slither: ${r.slither.positives.length} pos + ${r.slither.negatives.length} neg`);
+  }).catch(console.error);
 }

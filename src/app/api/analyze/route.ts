@@ -290,12 +290,24 @@ async function runAnalysis(
   };
 
   const onProgress = async (progress: OrchestratorProgress) => {
-    const stageLabel = STAGE_LABELS[progress.stage] || progress.stage;
+    const stageLabel = progress.stageLabel || STAGE_LABELS[progress.stage] || progress.stage;
     await updateTaskStatus(taskId, {
       status: 'analyzing',
       progress: progress.progress,
-      stage: stageLabel,
+      stage: progress.stage,
+      stageLabel,
       details: progress.details,
+      elapsedMs: progress.elapsedMs,
+      iteration: progress.iteration,
+      maxIterations: progress.maxIterations,
+      findingsCount: progress.findingsCount,
+      foundPatterns: progress.foundPatterns,
+      severityCounts: progress.severityCounts,
+      convergenceDelta: progress.convergenceDelta,
+      contextBuildings: progress.contextBuildings,
+      reconstructionStats: progress.reconstructionStats,
+      costStats: progress.costStats,
+      calibrationStats: progress.calibrationStats,
     });
   };
 
@@ -345,11 +357,14 @@ async function runAnalysis(
     await updateTaskStatus(taskId, {
       status: 'partial',
       progress: 100,
-      stage: '分析部分完成',
+      stage: 'partial',
+      stageLabel: '分析部分完成',
       reportId: partialReportId,
       error: partial.error,
       completedStages: partial.completedStages,
       failedStage: partial.failedStage,
+      details: `分析在 ${partial.failedStage} 阶段中断（已完成 ${partial.completedStages.length} 个阶段）`,
+      findingsCount: partial.analysisResult?.vulnerabilities?.length ?? 0,
     });
     return;
   }
@@ -392,13 +407,27 @@ async function runAnalysis(
     sourceType,
   });
 
-  await updateTaskStatus(taskId, {
-    status: 'completed',
-    progress: 100,
-    stage: '分析完成',
-    reportId,
-    classification: fullResult.classification.type,
-    confidence: fullResult.calibratedResult.overallConfidence,
-    attackChains: fullResult.reconstruction.combinedAttackChains.length,
-  });
+    await updateTaskStatus(taskId, {
+      status: 'completed',
+      progress: 100,
+      stage: 'completed',
+      stageLabel: '分析完成',
+      reportId,
+      classification: fullResult.classification.type,
+      confidence: fullResult.calibratedResult.overallConfidence,
+      attackChains: fullResult.reconstruction.combinedAttackChains.length,
+      elapsedMs: undefined,
+      findingsCount: fullResult.analysisResult.vulnerabilities.length,
+      summary: {
+        overallRisk: fullResult.summary.overallRisk,
+        totalIssues: fullResult.summary.totalIssues,
+        critical: fullResult.summary.critical,
+        high: fullResult.summary.high,
+        medium: fullResult.summary.medium,
+        low: fullResult.summary.low,
+        overallConfidence: fullResult.calibratedResult.overallConfidence,
+        highFeasibilityAttacks: fullResult.reconstruction.summary.highFeasibility,
+        combinedAttackChains: fullResult.reconstruction.combinedAttackChains.length,
+      },
+    });
 }

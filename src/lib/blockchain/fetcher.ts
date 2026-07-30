@@ -89,10 +89,26 @@ async function getApiKey(blockchain: BlockchainId): Promise<string | undefined> 
 /**
  * 方案一: Etherscan V2 API 获取已验证合约源码
  * 优先级最高，返回的是验证过的真实源码
+ *
+ * 支持代理合约解析: 检测 Proxy 标志位，当命中时自动跟随 Implementation 地址获取真实逻辑合约源码。
+ * 最大深度 1 层以防止递归（Beacon 代理链）。
  */
 async function fetchFromEtherscanV2(
   address: string,
   blockchain: BlockchainId,
+): Promise<FetchContractResult> {
+  return etherscanFetchWithProxy(address, blockchain, 0);
+}
+
+/**
+ * Internal recursive fetch that takes a depth parameter to limit proxy resolution depth.
+ * depth=0 means we still resolve the target (which may be a proxy).
+ * depth=1 means we have already resolved one proxy level and will NOT follow further.
+ */
+async function etherscanFetchWithProxy(
+  address: string,
+  blockchain: BlockchainId,
+  depth: number,
 ): Promise<FetchContractResult> {
   const config = BLOCKCHAIN_CONFIG[blockchain];
   if (!config) {
@@ -140,6 +156,20 @@ async function fetchFromEtherscanV2(
       return { success: false, error: '合约未验证或不存在' };
     }
 
+    // --- Proxy resolution (max 1 level) ---
+    if (depth === 0 && isProxyContract(result)) {
+      const implAddress = result.Implementation;
+      if (implAddress && /^0x[a-fA-F0-9]{40}$/.test(implAddress.trim())) {
+        console.log(`[Etherscan V2] Proxy detected at ${address}, following implementation at ${implAddress}`);
+        const implResult = await etherscanFetchWithProxy(implAddress.trim(), blockchain, 1);
+        if (implResult.success) {
+          return implResult;
+        }
+        // Implementation unverified — fall through to return proxy source with annotation
+        console.warn(`[Etherscan V2] Implementation ${implAddress} not verified; returning proxy source as-is`);
+      }
+    }
+
     // Handle multi-file contract source code
     let sourceCode = result.SourceCode;
     if (sourceCode.startsWith('{{')) {
@@ -158,6 +188,12 @@ async function fetchFromEtherscanV2(
       }
     }
 
+    // For proxy contracts whose implementation was not resolved, annotate the source.
+    // Applied at ANY depth: if depth=1 reached a second proxy, we also annotate.
+    if (isProxyContract(result) && result.Implementation && result.Implementation.trim().startsWith('0x')) {
+      sourceCode = `// ⚠ PROXY CONTRACT at ${address}\n// Implementation at ${result.Implementation.trim()} (source not fetched — try verifying directly)\n\n${sourceCode}`;
+    }
+
     return {
       success: true,
       sourceCode,
@@ -171,6 +207,14 @@ async function fetchFromEtherscanV2(
     console.error(`[Etherscan V2] Failed for ${address} on ${blockchain}:`, error);
     return { success: false, error: message };
   }
+}
+
+/**
+ * Determine if the Etherscan API response indicates this contract is a proxy.
+ */
+function isProxyContract(result: ContractSource): boolean {
+  return result.Proxy === '1' || result.Proxy === 'true'
+    || (typeof result.Proxy === 'number' && result.Proxy === 1);
 }
 
 // ============================================

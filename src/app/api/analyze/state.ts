@@ -1,9 +1,10 @@
-type TaskStatus = 'pending' | 'analyzing' | 'completed' | 'failed';
+type TaskStatus = 'pending' | 'analyzing' | 'completed' | 'failed' | 'partial';
 
 interface TaskState {
   status: TaskStatus;
   progress: number;
   stage: string;
+  stageLabel?: string;
   details?: string;
   error?: string;
   contractName?: string;
@@ -14,6 +15,43 @@ interface TaskState {
   attackChains?: number;
   reportId?: string;
   updatedAt?: string;
+  elapsedMs?: number;
+  iteration?: number;
+  maxIterations?: number;
+  findingsCount?: number;
+  foundPatterns?: string[];
+  severityCounts?: { critical: number; high: number; medium: number; low: number };
+  convergenceDelta?: number;
+  reconstructionStats?: { totalAttacks: number; highFeasibility: number; combinedChainCount: number };
+  costStats?: { estimatedCount: number; totalCount: number; sampleCosts: Array<{ patternId: string; rangeLow: number; rangeHigh: number }> };
+  calibrationStats?: { overallConfidence: number; high: number; medium: number; low: number };
+  contextBuildings?: {
+    relatedPatternCount: number;
+    relatedCaseCount: number;
+    focusAreas: string[];
+    crossContractNodeCount: number;
+    crossContractEdgeCount: number;
+    externalDependencies: Array<{
+      address: string;
+      contractName: string;
+      protocolRole?: string;
+      callType: string;
+      sourceLine: number;
+    }>;
+  };
+  completedStages?: string[];
+  failedStage?: string;
+  summary?: {
+    overallRisk: string;
+    totalIssues: number;
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    overallConfidence: number;
+    highFeasibilityAttacks: number;
+    combinedAttackChains: number;
+  };
 }
 
 type TaskSubscriber = (state: TaskState) => void;

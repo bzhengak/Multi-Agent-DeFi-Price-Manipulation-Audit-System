@@ -21,6 +21,9 @@ import {
   CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 
+import { useAnalysisSSE } from '@/hooks/use-analysis-sse';
+import { AnalysisPipelineSteps, AnalysisProgress, AnalysisComplete, AnalysisFailed, AnalysisPartial } from '@/components/analysis';
+
 // --- Types ---
 type Page = 'dashboard' | 'cases' | 'patterns' | 'analyze' | 'history' | 'report' | 'settings';
 
@@ -1546,15 +1549,11 @@ contract VulnerableDEX {
 }`;
 
 function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
+  const { state, start, reset } = useAnalysisSSE();
   const [inputType, setInputType] = useState<'address' | 'file'>('address');
   const [address, setAddress] = useState('');
   const [chain, setChain] = useState('ethereum');
   const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [stage, setStage] = useState('');
-  const [taskStatus, setTaskStatus] = useState<string>('');
   const [analysisDepth, setAnalysisDepth] = useState<'deep'>('deep');
   const [showPreview, setShowPreview] = useState(false);
 
@@ -1568,35 +1567,6 @@ function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
     { id: 'hyperliquid', name: 'Hyperliquid', api: false, v2: false },
   ];
 
-  const pipelineSteps = [
-    { label: '识别', icon: <Search className="w-4 h-4" /> },
-    { label: '构建', icon: <Database className="w-4 h-4" /> },
-    { label: '分析', icon: <Shield className="w-4 h-4" /> },
-    { label: '重建', icon: <AlertTriangle className="w-4 h-4" /> },
-    { label: '成本', icon: <BarChart3 className="w-4 h-4" /> },
-    { label: '校准', icon: <Activity className="w-4 h-4" /> },
-    { label: '报告', icon: <FileText className="w-4 h-4" /> },
-  ];
-
-  const getCurrentStepIndex = () => {
-    if (!stage) return -1;
-    const lower = stage.toLowerCase();
-    if (lower.includes('协议识别') || lower.includes('protocol')) return 0;
-    if (lower.includes('上下文') || lower.includes('context')) return 1;
-    if (lower.includes('漏洞分析') || lower.includes('vulnerability') || lower.includes('analyz')) return 2;
-    if (lower.includes('攻击重建') || lower.includes('reconstruct') || lower.includes('attack')) return 3;
-    if (lower.includes('成本') || lower.includes('cost')) return 4;
-    if (lower.includes('置信度') || lower.includes('calibrat') || lower.includes('confidence')) return 5;
-    if (lower.includes('报告') || lower.includes('report')) return 6;
-    if (progress > 90) return 6;
-    if (progress > 75) return 5;
-    if (progress > 70) return 4;
-    if (progress > 55) return 3;
-    if (progress > 20) return 2;
-    if (progress > 10) return 1;
-    return 0;
-  };
-
   const handleDemo = () => {
     setInputType('file');
     const blob = new Blob([DEMO_SOLIDITY], { type: 'text/plain' });
@@ -1609,129 +1579,63 @@ function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setProgress(0);
-    setStage('初始化分析任务...');
     try {
-      const formData = new FormData();
-      formData.append('type', inputType);
-      formData.append('chain', chain);
       if (inputType === 'address') {
-        formData.append('address', address);
+        if (!address) { toast.error('请输入合约地址'); return; }
+        await start({ inputType, address: address.trim(), chain });
       } else {
-        if (!file) { toast.error('请选择合约文件'); setLoading(false); return; }
-        formData.append('file', file);
+        if (!file) { toast.error('请选择合约文件'); return; }
+        await start({ inputType, file, chain });
       }
-      const data = await apiCall('/api/analyze', { method: 'POST', body: formData });
-      setTaskId(data.taskId);
-      const sseUrl = `/api/analyze/${data.taskId}/stream`;
-      const es = new EventSource(sseUrl);
-      es.onmessage = (event) => {
-        try {
-          const taskData = JSON.parse(event.data);
-          setProgress(taskData.progress || 0);
-          setStage(taskData.stage || '');
-          setTaskStatus(taskData.status);
-          if (taskData.status === 'completed') { es.close(); setLoading(false); toast.success('分析完成！'); }
-          else if (taskData.status === 'failed') { es.close(); setLoading(false); toast.error(taskData.error || '分析失败'); }
-        } catch { es.close(); setLoading(false); toast.error('分析进度解析失败'); }
-      };
-      es.onerror = () => {
-        es.close();
-        // Fallback to polling
-        const pollInterval = setInterval(async () => {
-          try {
-            const taskData = await apiCall(`/api/analyze?taskId=${data.taskId}`);
-            setProgress(taskData.progress || 0);
-            setStage(taskData.stage || '');
-            setTaskStatus(taskData.status);
-            if (taskData.status === 'completed') { clearInterval(pollInterval); setLoading(false); toast.success('分析完成！'); }
-            else if (taskData.status === 'failed') { clearInterval(pollInterval); setLoading(false); toast.error(taskData.error || '分析失败'); }
-          } catch { clearInterval(pollInterval); setLoading(false); toast.error('获取分析进度失败'); }
-        }, 3000);
-      };
-    } catch (err: any) { toast.error(err.message || '分析请求失败'); setLoading(false); }
+    } catch (err: any) {
+      toast.error(err.message || '分析请求失败');
+    }
   };
 
   const selectedChain = chains.find((c) => c.id === chain);
-  const currentStep = getCurrentStepIndex();
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">合约分析</h1>
-        <p className="text-slate-400 text-sm mt-1">输入合约地址或上传源码文件，AI将深度分析价格操纵漏洞</p>
+        <h1 className="text-3xl font-bold text-white">合约分析</h1>
+        <p className="text-slate-400 text-base mt-1">输入合约地址或上传源码文件，AI将深度分析价格操纵漏洞</p>
       </div>
 
-      {/* Pipeline Steps */}
-      {taskId && (
-        <div className="mb-6 bg-slate-900/50 border border-slate-700/50 rounded-2xl p-5">
-          <div className="flex items-center justify-between">
-            {pipelineSteps.map((step, i) => (
-              <React.Fragment key={step.label}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-all duration-300 ${
-                    i < currentStep ? 'bg-emerald-500 text-white' :
-                    i === currentStep ? 'bg-emerald-500/20 text-emerald-400 border-2 border-emerald-500 animate-pulse' :
-                    'bg-slate-800 text-slate-500 border border-slate-700'
-                  }`}>
-                    {i < currentStep ? <Check className="w-4 h-4" /> : step.icon}
-                  </div>
-                  <span className={`text-sm font-medium hidden sm:inline ${i <= currentStep ? 'text-emerald-400' : 'text-slate-500'}`}>{step.label}</span>
-                </div>
-                {i < pipelineSteps.length - 1 && (
-                  <div className={`flex-1 h-px mx-2 transition-colors duration-300 ${i < currentStep ? 'bg-emerald-500' : 'bg-slate-700'}`} />
-                )}
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-      )}
+      {state.taskId && <AnalysisPipelineSteps stage={state.stage} progress={state.progress} />}
 
-      <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-6">
-        {!taskId ? (
-          <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-8">
+        {state.status === 'idle' ? (
+          <form onSubmit={handleSubmit} className="space-y-7">
             <div className="flex items-center justify-between">
-              <label className="block text-sm font-medium text-slate-300">输入方式</label>
-              <button type="button" onClick={handleDemo} className="px-4 py-2 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 rounded-lg text-xs font-medium hover:bg-cyan-500/20 transition-all flex items-center gap-2">
-                <Wrench className="w-3.5 h-3.5" /> Demo 模式
+              <label className="block text-base font-medium text-slate-300">输入方式</label>
+              <button type="button" onClick={handleDemo} className="px-5 py-2.5 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 rounded-lg text-base font-medium hover:bg-cyan-500/20 transition-all flex items-center gap-2">
+                <Wrench className="w-5 h-5" /> Demo 模式
               </button>
             </div>
 
             <div className="flex gap-3">
               {(['address', 'file'] as const).map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setInputType(type)}
-                  className={`flex-1 py-3 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-                    inputType === type
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                      : 'bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:text-white'
-                  }`}
-                >
-                  {type === 'address' ? <Globe className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
+                <button key={type} type="button" onClick={() => setInputType(type)}
+                  className={`flex-1 py-4 rounded-xl text-base font-medium transition-all flex items-center justify-center gap-2 ${
+                    inputType === type ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:text-white'
+                  }`}>
+                  {type === 'address' ? <Globe className="w-5 h-5" /> : <Upload className="w-5 h-5" />}
                   {type === 'address' ? '合约地址' : '文件上传'}
                 </button>
               ))}
             </div>
 
-            {/* Chain Selection */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">区块链平台</label>
-              <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+              <label className="block text-base font-medium text-slate-300 mb-3">区块链平台</label>
+              <div className="grid grid-cols-4 sm:grid-cols-7 gap-3">
                 {chains.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => { setChain(c.id); if (!c.api && inputType === 'address') setInputType('file'); }}
-                    className={`py-2 px-3 rounded-lg text-xs font-medium transition-all ${
+                  <button key={c.id} type="button" onClick={() => { setChain(c.id); if (!c.api && inputType === 'address') setInputType('file'); }}
+                    className={`py-3 px-3 rounded-lg text-base font-medium transition-all ${
                       chain === c.id ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:text-white'
-                    }`}
-                  >
+                    }`}>
                     {c.name}
-                    {c.v2 && <span className="text-[9px] text-emerald-400 font-bold ml-0.5">V2</span>}
-                    {!c.api && <span className="block text-[10px] text-slate-500">仅文件</span>}
+                    {c.v2 && <span className="text-sm text-emerald-400 font-bold ml-0.5">V2</span>}
+                    {!c.api && <span className="block text-sm text-slate-500">仅文件</span>}
                   </button>
                 ))}
               </div>
@@ -1739,34 +1643,30 @@ function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
 
             {inputType === 'address' ? (
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">合约地址</label>
-                <input
-                  type="text" value={address} onChange={(e) => setAddress(e.target.value)}
-                  placeholder="0x..."
-                  className="w-full px-4 py-3 bg-slate-800/50 border border-slate-600/50 rounded-xl text-white placeholder-slate-500 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  required
-                />
-                {selectedChain && <p className="text-xs text-slate-500 mt-2">将通过三级策略获取合约源码：Etherscan V2 → Sourcify → Heimdall 反编译</p>}
+                <label className="block text-base font-medium text-slate-300 mb-2">合约地址</label>
+                <input type="text" value={address} onChange={(e) => setAddress(e.target.value)}
+                  placeholder="0x..." className="w-full px-5 py-4 bg-slate-800/50 border border-slate-600/50 rounded-xl text-white placeholder-slate-500 font-mono text-base focus:outline-none focus:ring-2 focus:ring-emerald-500/50" required />
+                {selectedChain && <p className="text-base text-slate-500 mt-2">将通过三级策略获取合约源码：Etherscan V2 → Sourcify → Heimdall 反编译</p>}
               </div>
             ) : (
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">合约源码文件</label>
-                <div className="border-2 border-dashed border-slate-600/50 rounded-xl p-8 text-center hover:border-emerald-500/30 transition-colors">
+                <label className="block text-base font-medium text-slate-300 mb-2">合约源码文件</label>
+                <div className="border-2 border-dashed border-slate-600/50 rounded-xl p-10 text-center hover:border-emerald-500/30 transition-colors">
                   <input type="file" accept=".sol,.zip" onChange={(e) => setFile(e.target.files?.[0] || null)} className="hidden" id="file-upload" />
                   <label htmlFor="file-upload" className="cursor-pointer">
-                    <Upload className="w-10 h-10 text-slate-500 mx-auto mb-3" />
-                    <p className="text-sm text-slate-400">{file ? file.name : '点击选择 .sol 或 .zip 文件'}</p>
-                    <p className="text-xs text-slate-500 mt-1">支持 Solidity 源码文件，最大 500KB</p>
+                    <Upload className="w-12 h-12 text-slate-500 mx-auto mb-3" />
+                    <p className="text-base text-slate-400">{file ? file.name : '点击选择 .sol 或 .zip 文件'}</p>
+                    <p className="text-base text-slate-500 mt-1">支持 Solidity 源码文件，最大 500KB</p>
                   </label>
                 </div>
               </div>
             )}
 
             {inputType === 'address' && (
-              <div className="bg-slate-800/30 border border-slate-700/20 rounded-lg p-3">
-                <div className="flex items-start gap-2">
-                  <Info className="w-3.5 h-3.5 text-sky-400 mt-0.5 shrink-0" />
-                  <div className="text-[11px] text-slate-400 space-y-0.5">
+              <div className="bg-slate-800/30 border border-slate-700/20 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <Info className="w-5 h-5 text-sky-400 mt-0.5 shrink-0" />
+                  <div className="text-base text-slate-400 space-y-1">
                     <p><span className="text-emerald-400 font-medium">优先级1</span> Etherscan V2 API — 已验证真源码</p>
                     <p><span className="text-cyan-400 font-medium">优先级2</span> Sourcify 仓库 — 独立验证源码</p>
                     <p><span className="text-amber-400 font-medium">优先级3</span> Heimdall 反编译 — 未验证合约伪代码</p>
@@ -1776,102 +1676,54 @@ function AnalyzePage({ onViewReport }: { onViewReport: (id: string) => void }) {
             )}
 
             {file?.name === 'VulnerableDEX.sol' && showPreview && (
-              <div className="mt-4 bg-slate-800/30 border border-slate-700/30 rounded-xl p-4 max-h-48 overflow-y-auto custom-scrollbar">
+              <div className="mt-4 bg-slate-800/30 border border-slate-700/30 rounded-xl p-5 max-h-64 overflow-y-auto custom-scrollbar">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-slate-400 font-mono">{file.name}</span>
-                  <button type="button" onClick={() => setShowPreview(false)} className="text-xs text-slate-500 hover:text-white flex items-center gap-1">
-                    <X className="w-3 h-3" /> 关闭预览
+                  <span className="text-base text-slate-400 font-mono">{file.name}</span>
+                  <button type="button" onClick={() => setShowPreview(false)} className="text-base text-slate-500 hover:text-white flex items-center gap-1">
+                    <X className="w-4 h-4" /> 关闭预览
                   </button>
                 </div>
-                <pre className="text-[11px] text-emerald-400/80 font-mono leading-relaxed whitespace-pre-wrap">
-{DEMO_SOLIDITY}
-                </pre>
+                <pre className="text-sm text-emerald-400/80 font-mono leading-relaxed whitespace-pre-wrap">{DEMO_SOLIDITY}</pre>
               </div>
             )}
 
-            {/* Analysis Depth */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">分析深度</label>
+              <label className="block text-base font-medium text-slate-300 mb-3">分析深度</label>
               <div className="grid grid-cols-1 gap-3">
                 {([
                   { id: 'deep' as const, label: '深度审计', time: '~3-5min', desc: '7阶段完整审计管道 — 协议识别 → 上下文构建 → 漏洞分析 → 攻击重建 → 成本估算 → 置信度校准 → 报告生成' },
                 ]).map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => setAnalysisDepth(d.id)}
-                    className={`py-3 px-4 rounded-xl text-left transition-all ${
-                      analysisDepth === d.id
-                        ? 'bg-emerald-500/15 border border-emerald-500/30'
-                        : 'bg-slate-800/30 border border-slate-700/50 hover:border-slate-600/50'
-                    }`}
-                  >
-                    <div className={`text-sm font-medium ${analysisDepth === d.id ? 'text-emerald-400' : 'text-slate-300'}`}>{d.label}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">{d.time} · {d.desc}</div>
+                  <button key={d.id} type="button" onClick={() => setAnalysisDepth(d.id)}
+                    className={`py-4 px-5 rounded-xl text-left transition-all ${
+                      analysisDepth === d.id ? 'bg-emerald-500/15 border border-emerald-500/30' : 'bg-slate-800/30 border border-slate-700/50 hover:border-slate-600/50'
+                    }`}>
+                    <div className={`text-base font-medium ${analysisDepth === d.id ? 'text-emerald-400' : 'text-slate-300'}`}>{d.label}</div>
+                    <div className="text-base text-slate-500 mt-0.5">{d.time} · {d.desc}</div>
                   </button>
                 ))}
               </div>
             </div>
 
-            <button
-              type="submit" disabled={loading}
-              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 text-white font-medium rounded-xl transition-all shadow-lg shadow-emerald-500/20 hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2"
-            >
-              <Play className="w-4 h-4" /> 开始分析
+            <button type="submit" disabled={state.connectionStatus === 'connecting'}
+              className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 text-white font-medium rounded-xl transition-all shadow-lg shadow-emerald-500/20 hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2 text-base">
+              <Play className="w-5 h-5" /> 开始分析
             </button>
           </form>
-        ) : (
-          <div className="py-8 text-center">
-            <div className="max-w-md mx-auto">
-              {taskStatus === 'completed' ? (
-                <>
-                  <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-4">
-                    <CheckCircle className="w-8 h-8 text-emerald-400" />
-                  </motion.div>
-                  <h3 className="text-xl font-bold text-white mb-2">分析完成</h3>
-                  <p className="text-slate-400 text-sm mb-6">审计报告已生成</p>
-                  <button
-                    onClick={() => { apiCall(`/api/analyze?taskId=${taskId}`).then((data) => { if (data.reportId) onViewReport(data.reportId); }); }}
-                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-xl transition-all flex items-center gap-2 mx-auto"
-                  >
-                    <Eye className="w-4 h-4" /> 查看报告
-                  </button>
-                </>
-              ) : taskStatus === 'failed' ? (
-                <>
-                  <div className="w-16 h-16 rounded-full bg-red-500/20 border border-red-500/30 flex items-center justify-center mx-auto mb-4">
-                    <XCircle className="w-8 h-8 text-red-400" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">分析失败</h3>
-                  <p className="text-slate-400 text-sm mb-6">{stage || '请重试'}</p>
-                  <button onClick={() => { setTaskId(null); setTaskStatus(''); setProgress(0); setStage(''); }} className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-xl transition-all flex items-center gap-2 mx-auto">
-                    <RefreshCw className="w-4 h-4" /> 重新分析
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-4">
-                    <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">分析进行中</h3>
-                  <p className="text-slate-400 text-sm mb-4">{stage}</p>
-                  <div className="w-full bg-slate-800 rounded-full h-2.5 mb-2 overflow-hidden">
-                    <motion.div
-                      className="bg-gradient-to-r from-emerald-500 to-cyan-500 h-2.5 rounded-full"
-                      animate={{ width: `${progress}%` }}
-                      transition={{ duration: 0.5 }}
-                    />
-                  </div>
-                  <p className="text-xs text-slate-500 mb-3">{progress}% 完成</p>
-                  <div className="flex items-center gap-4 text-xs text-slate-600">
-                    <span>Agent v2.0 多轮迭代分析</span>
-                    <span>·</span>
-                    <span>6 阶段流水线</span>
-                  </div>
-                </>
-              )}
+        ) : state.status === 'analyzing' || state.status === 'pending' ? (
+          <div>
+            <AnalysisProgress state={state} />
+            <div className="mt-6 text-center">
+              <button onClick={reset} className="px-6 py-3 bg-slate-700 hover:bg-red-500/80 text-slate-300 hover:text-white font-medium rounded-xl transition-all flex items-center gap-2 mx-auto text-base">
+                <X className="w-5 h-5" /> 取消分析
+              </button>
             </div>
           </div>
+        ) : state.status === 'completed' ? (
+          <AnalysisComplete state={state} onViewReport={onViewReport} onReset={reset} />
+        ) : state.status === 'partial' ? (
+          <AnalysisPartial state={state} onViewReport={onViewReport} onReset={reset} />
+        ) : (
+          <AnalysisFailed state={state} onReset={reset} />
         )}
       </div>
     </div>
@@ -1947,6 +1799,20 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
 
   const handleDownload = async (format: 'pdf' | 'json' | 'html') => {
     try {
+      if (format === 'pdf') {
+        const url = `/api/reports?id=${reportId}&format=html&lang=${reportLang}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Download failed');
+        const html = await res.text();
+        const win = window.open('', '_blank');
+        if (!win) { toast.error('Please allow popups'); return; }
+        win.document.write(html);
+        win.document.close();
+        win.focus();
+        setTimeout(() => { win.print(); }, 500);
+        setDownloadOpen(false);
+        return;
+      }
       const url = `/api/reports?id=${reportId}&format=${format}&lang=${reportLang}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Download failed');
@@ -1992,16 +1858,16 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
   ];
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-all">
-            <ArrowLeft className="w-5 h-5" />
+          <button onClick={onBack} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-all">
+            <ArrowLeft className="w-6 h-6" />
           </button>
           <div>
-            <h1 className="text-2xl font-bold text-white">{rl.auditReport}</h1>
-            <p className="text-slate-400 text-sm">{report.contractInfo.name} · {report.contractInfo.chain}</p>
+            <h1 className="text-3xl font-bold text-white">{rl.auditReport}</h1>
+            <p className="text-slate-400 text-base">{report.contractInfo.name} · {report.contractInfo.chain}</p>
           </div>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -2009,26 +1875,26 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
           <div className="flex items-center bg-slate-800 border border-slate-700/50 rounded-lg overflow-hidden">
             <button
               onClick={() => setReportLang('cn')}
-              className={`px-3 py-2 text-sm font-medium transition-all flex items-center gap-1 ${reportLang === 'cn' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:text-white'}`}
+              className={`px-4 py-2.5 text-sm font-medium transition-all flex items-center gap-1 ${reportLang === 'cn' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:text-white'}`}
             >
-              <Globe2 className="w-3.5 h-3.5" /> 中文
+              <Globe2 className="w-4 h-4" /> 中文
             </button>
             <button
               onClick={() => setReportLang('en')}
-              className={`px-3 py-2 text-sm font-medium transition-all flex items-center gap-1 ${reportLang === 'en' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:text-white'}`}
+              className={`px-4 py-2.5 text-sm font-medium transition-all flex items-center gap-1 ${reportLang === 'en' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:text-white'}`}
             >
-              <Globe className="w-3.5 h-3.5" /> EN
+              <Globe className="w-4 h-4" /> EN
             </button>
           </div>
           {/* Share */}
-          <button onClick={() => { navigator.clipboard.writeText(window.location.href); toast.success(reportLang === 'cn' ? '链接已复制' : 'Link copied'); }} className="px-4 py-2 bg-slate-800 border border-slate-700/50 rounded-lg text-sm text-slate-300 hover:text-white transition-all flex items-center gap-2">
+          <button onClick={() => { navigator.clipboard.writeText(window.location.href); toast.success(reportLang === 'cn' ? '链接已复制' : 'Link copied'); }} className="px-5 py-2.5 bg-slate-800 border border-slate-700/50 rounded-lg text-sm text-slate-300 hover:text-white transition-all flex items-center gap-2">
             <Share2 className="w-4 h-4" /> {rl.shareReport}
           </button>
           {/* Download Dropdown */}
           <div className="relative download-dropdown-container">
-            <button onClick={() => setDownloadOpen(!downloadOpen)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm text-white font-medium transition-all flex items-center gap-2 shadow-lg shadow-emerald-500/20">
+            <button onClick={() => setDownloadOpen(!downloadOpen)} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm text-white font-medium transition-all flex items-center gap-2 shadow-lg shadow-emerald-500/20">
               <Download className="w-4 h-4" /> {rl.downloadTitle}
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${downloadOpen ? 'rotate-180' : ''}`} />
+              <ChevronDown className={`w-4 h-4 transition-transform ${downloadOpen ? 'rotate-180' : ''}`} />
             </button>
             {downloadOpen && (
               <motion.div
@@ -2036,38 +1902,38 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
                 className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700/50 rounded-xl shadow-xl z-20 overflow-hidden"
               >
                 <div className="px-3 py-2 border-b border-slate-700/30">
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">{reportLang === 'cn' ? '下载格式' : 'Download Format'} ({reportLang === 'cn' ? '中文' : 'English'})</p>
+                  <p className="text-xs text-slate-500 uppercase tracking-wider">{reportLang === 'cn' ? '下载格式' : 'Download Format'} ({reportLang === 'cn' ? '中文' : 'English'})</p>
                 </div>
-                <button onClick={() => handleDownload('html')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-700/50 transition-all">
-                  <FileText className="w-4 h-4 text-cyan-400" /> {rl.downloadHTML} <span className="text-[10px] text-slate-500 ml-auto">{reportLang === 'cn' ? '推荐·支持中文' : 'Recommended'}</span>
+                <button onClick={() => handleDownload('html')} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:text-white hover:bg-slate-700/50 transition-all">
+                  <FileText className="w-4 h-4 text-cyan-400" /> {rl.downloadHTML} <span className="text-[11px] text-slate-500 ml-auto">{reportLang === 'cn' ? '推荐·支持中文' : 'Recommended'}</span>
                 </button>
-                <button onClick={() => handleDownload('pdf')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-700/50 transition-all">
-                  <Download className="w-4 h-4 text-red-400" /> {rl.downloadPDF} <span className="text-[10px] text-slate-500 ml-auto">{reportLang === 'cn' ? '英文' : 'English only'}</span>
+                <button onClick={() => handleDownload('pdf')} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:text-white hover:bg-slate-700/50 transition-all">
+                  <Download className="w-4 h-4 text-red-400" /> {rl.downloadPDF} <span className="text-[11px] text-slate-500 ml-auto">{reportLang === 'cn' ? '英文' : 'English only'}</span>
                 </button>
-                <button onClick={() => handleDownload('json')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-slate-700/50 transition-all">
+                <button onClick={() => handleDownload('json')} className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:text-white hover:bg-slate-700/50 transition-all">
                   <Code2 className="w-4 h-4 text-amber-400" /> {rl.downloadJSON}
                 </button>
               </motion.div>
             )}
           </div>
           {/* Print */}
-          <button onClick={() => window.print()} className="px-4 py-2 bg-slate-800 border border-slate-700/50 rounded-lg text-sm text-slate-300 hover:text-white transition-all flex items-center gap-2">
+          <button onClick={() => window.print()} className="px-5 py-2.5 bg-slate-800 border border-slate-700/50 rounded-lg text-sm text-slate-300 hover:text-white transition-all flex items-center gap-2">
             <FileText className="w-4 h-4" /> {rl.print}
           </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-slate-900/50 border border-slate-700/50 rounded-xl p-1">
+      <div className="flex gap-1 mb-6 bg-slate-900/50 border border-slate-700/50 rounded-xl p-1.5">
         {(['overview', 'vulnerabilities', 'report'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+            className={`flex-1 py-3 rounded-lg text-base font-medium transition-all flex items-center justify-center gap-2 ${
               activeTab === tab ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-400 hover:text-white'
             }`}
           >
-            {tab === 'overview' ? <LayoutDashboard className="w-4 h-4" /> : tab === 'vulnerabilities' ? <Bug className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+            {tab === 'overview' ? <LayoutDashboard className="w-5 h-5" /> : tab === 'vulnerabilities' ? <Bug className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
             {tab === 'overview' ? rl.overview : tab === 'vulnerabilities' ? rl.vulnerabilityDetails : rl.fullReport}
           </button>
         ))}
@@ -2076,13 +1942,13 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
       {/* Overview Tab */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-6">
+          <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-8">
             <div className="flex flex-col sm:flex-row items-center gap-6">
               {/* Recharts PieChart */}
-              <div className="w-40 h-40 shrink-0">
+              <div className="w-44 h-44 shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={severityChartData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} paddingAngle={3} dataKey="value">
+                    <Pie data={severityChartData} cx="50%" cy="50%" innerRadius={44} outerRadius={72} paddingAngle={3} dataKey="value">
                       {severityChartData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
                     </Pie>
                   </PieChart>
@@ -2092,15 +1958,15 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
                 <div className="flex items-center gap-3 mb-4">
                   <RiskIcon level={summary.overallRisk} size="md" />
                   <div>
-                    <p className="text-sm text-slate-400">{rl.overallRisk}</p>
-                    <p className="text-2xl font-bold text-white">{summary.overallRisk}</p>
+                    <p className="text-base text-slate-400">{rl.overallRisk}</p>
+                    <p className="text-3xl font-bold text-white">{summary.overallRisk}</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-4 gap-3">
                   {severityChartData.map((item) => (
                     <div key={item.name} className="rounded-xl p-3 text-center" style={{ backgroundColor: `${item.fill}15` }}>
-                      <div className="text-xl font-bold" style={{ color: item.fill }}>{item.value}</div>
-                      <div className="text-[10px] text-slate-400">{item.name}</div>
+                      <div className="text-2xl font-bold" style={{ color: item.fill }}>{item.value}</div>
+                      <div className="text-xs text-slate-400">{item.name}</div>
                     </div>
                   ))}
                 </div>
@@ -2108,33 +1974,84 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
             </div>
           </div>
 
-          <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-6">
-            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><Code2 className="w-5 h-5 text-cyan-400" /> {rl.contractInfo}</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div><label className="text-xs text-slate-500">{rl.contractName}</label><p className="text-sm text-white">{report.contractInfo.name}</p></div>
+          <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-8">
+            <h3 className="text-xl font-semibold text-white mb-5 flex items-center gap-2"><Code2 className="w-6 h-6 text-cyan-400" /> {rl.contractInfo}</h3>
+            <div className="grid grid-cols-2 gap-5">
+              <div><label className="text-sm text-slate-500">{rl.contractName}</label><p className="text-base text-white">{report.contractInfo.name}</p></div>
               {(report.contractInfo.sourceOrigin || report.contractInfo.sourceType) && (
-                <div><label className="text-xs text-slate-500">{rl.sourceType}</label><div className="mt-0.5"><SourceTypeBadge origin={report.contractInfo.sourceOrigin} type={report.contractInfo.sourceType} /></div></div>
+                <div><label className="text-sm text-slate-500">{rl.sourceType}</label><div className="mt-1"><SourceTypeBadge origin={report.contractInfo.sourceOrigin} type={report.contractInfo.sourceType} /></div></div>
               )}
-              <div><label className="text-xs text-slate-500">{rl.blockchain}</label><div className="mt-0.5"><ChainBadge chain={report.contractInfo.chain} /></div></div>
-              <div className="col-span-2"><label className="text-xs text-slate-500">{rl.contractAddress}</label><p className="text-sm text-white font-mono truncate">{report.contractInfo.address}</p></div>
-              <div><label className="text-xs text-slate-500">{rl.analysisDate}</label><p className="text-sm text-white">{new Date(report.createdAt).toLocaleString(reportLang === 'cn' ? 'zh-CN' : 'en-US')}</p></div>
-              <div><label className="text-xs text-slate-500">{rl.codeQualityScore}</label><p className="text-sm text-white">{analysisResult?.codeQuality?.overallScore || 'N/A'}</p></div>
+              <div><label className="text-sm text-slate-500">{rl.blockchain}</label><div className="mt-1"><ChainBadge chain={report.contractInfo.chain} /></div></div>
+              <div className="col-span-2"><label className="text-sm text-slate-500">{rl.contractAddress}</label><p className="text-base text-white font-mono truncate">{report.contractInfo.address}</p></div>
+              <div><label className="text-sm text-slate-500">{rl.analysisDate}</label><p className="text-base text-white">{new Date(report.createdAt).toLocaleString(reportLang === 'cn' ? 'zh-CN' : 'en-US')}</p></div>
+              <div><label className="text-sm text-slate-500">{rl.codeQualityScore}</label><p className="text-base text-white">{analysisResult?.codeQuality?.overallScore || 'N/A'}</p></div>
             </div>
           </div>
 
           {analysisResult?.recommendations && analysisResult.recommendations.length > 0 && (
-            <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-6">
-              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><Wrench className="w-5 h-5 text-emerald-400" /> {rl.fixRecommendations}</h3>
-              <div className="space-y-2">
+            <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-8">
+              <h3 className="text-xl font-semibold text-white mb-5 flex items-center gap-2"><Wrench className="w-6 h-6 text-emerald-400" /> {rl.fixRecommendations}</h3>
+              <div className="space-y-3">
                 {analysisResult.recommendations.map((rec, i) => (
-                  <div key={i} className="flex gap-3 text-sm">
-                    <Check className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+                  <div key={i} className="flex gap-3 text-base">
+                    <Check className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
                     <span className="text-slate-300">{rec}</span>
                   </div>
                 ))}
               </div>
             </div>
           )}
+
+          {/* Pattern Breakdown */}
+          {analysisResult?.vulnerabilities && analysisResult.vulnerabilities.length > 0 && (() => {
+            const SEVERITY_ORDER: Record<string, number> = { Critical: 4, High: 3, Medium: 2, Low: 1 };
+            const sevColors: Record<string, string> = { Critical: '#ef4444', High: '#f97316', Medium: '#eab308', Low: '#38bdf8' };
+            const grouped = analysisResult.vulnerabilities.reduce<Record<string, { count: number; highest: string; name: string }>>((acc, v) => {
+              if (!acc[v.patternId]) acc[v.patternId] = { count: 0, highest: 'Low', name: v.patternName };
+              acc[v.patternId].count++;
+              if (SEVERITY_ORDER[v.severity] > SEVERITY_ORDER[acc[v.patternId].highest]) acc[v.patternId].highest = v.severity;
+              return acc;
+            }, {});
+            const sorted = Object.entries(grouped).sort((a, b) => b[1].count - a[1].count);
+            const uniqueCount = sorted.length;
+            return (
+              <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-8">
+                <h3 className="text-xl font-semibold text-white mb-5 flex items-center gap-2">
+                  <BarChart3 className="w-6 h-6 text-cyan-400" />
+                  Findings by Pattern
+                  <span className="text-base font-normal text-slate-500 ml-1">({summary.totalIssues} total, {uniqueCount} unique)</span>
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-700/50">
+                        <th className="text-left text-sm text-slate-500 font-medium pb-4 pl-0">Pattern</th>
+                        <th className="text-right text-sm text-slate-500 font-medium pb-4">Count</th>
+                        <th className="text-right text-sm text-slate-500 font-medium pb-4 pr-0">Highest Severity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sorted.map(([pid, info]) => (
+                        <tr key={pid} className="border-b border-slate-800/50">
+                          <td className="py-4 pl-0">
+                            <span className="text-sm font-mono text-slate-500 mr-2">{pid}</span>
+                            <span className="text-base text-slate-300">{info.name}</span>
+                          </td>
+                          <td className="py-4 text-right text-base text-white font-medium">{info.count}</td>
+                          <td className="py-4 pr-0 text-right">
+                            <span className="inline-flex items-center gap-1.5 text-sm font-semibold" style={{ color: sevColors[info.highest] }}>
+                              <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: sevColors[info.highest] }} />
+                              {info.highest}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -2144,14 +2061,14 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
           {analysisResult?.vulnerabilities?.map((vuln, i) => {
             const isExpanded = expandedVulns.has(vuln.id || String(i));
             return (
-              <motion.div key={vuln.id || i} layout className="bg-slate-900/50 border border-slate-700/50 rounded-2xl overflow-hidden">
-                <div className="p-5 cursor-pointer flex items-center justify-between hover:bg-slate-800/30 transition-colors" onClick={() => toggleVuln(vuln.id || String(i))}>
-                  <div className="flex items-center gap-3">
+              <motion.div key={`${vuln.patternId}-${i}`} layout className="bg-slate-900/50 border border-slate-700/50 rounded-2xl overflow-hidden">
+                <div className="p-6 cursor-pointer flex items-center justify-between hover:bg-slate-800/30 transition-colors" onClick={() => toggleVuln(vuln.id || String(i))}>
+                  <div className="flex items-center gap-4">
                     <SeverityBadge severity={vuln.severity} />
-                    <h3 className="text-base font-semibold text-white">{vuln.title}</h3>
+                    <h3 className="text-lg font-semibold text-white">{vuln.title}</h3>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-xs font-mono text-slate-500">{vuln.patternId}</span>
+                    <span className="text-sm font-mono text-slate-500">{vuln.patternId}</span>
                     <motion.div animate={{ rotate: isExpanded ? 180 : 0 }} transition={{ duration: 0.2 }}>
                       <ChevronDown className="w-5 h-5 text-slate-400" />
                     </motion.div>
@@ -2160,31 +2077,31 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
                 <AnimatePresence>
                   {isExpanded && (
                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-                      <div className="px-5 pb-5 border-t border-slate-700/30 pt-4 space-y-3">
-                        <div><label className="text-xs text-slate-500">{rl.vulnerabilityDescription}</label><p className="text-sm text-slate-300 mt-1">{vuln.description}</p></div>
+                      <div className="px-6 pb-6 border-t border-slate-700/30 pt-5 space-y-4">
+                        <div><label className="text-sm text-slate-500">{rl.vulnerabilityDescription}</label><p className="text-base text-slate-300 mt-1">{vuln.description}</p></div>
                         {vuln.location && (
-                          <div className="bg-slate-800/50 rounded-lg p-3">
-                            <label className="text-xs text-slate-500">{rl.codeLocation}</label>
-                            <p className="text-sm text-slate-300">{vuln.location.fileName} · {reportLang === 'cn' ? '行' : 'L'}{vuln.location.lineStart}-{vuln.location.lineEnd} · {reportLang === 'cn' ? '函数' : 'fn'} {vuln.location.functionName}</p>
+                          <div className="bg-slate-800/50 rounded-lg p-4">
+                            <label className="text-sm text-slate-500">{rl.codeLocation}</label>
+                            <p className="text-base text-slate-300">{vuln.location.fileName} · {reportLang === 'cn' ? '行' : 'L'}{vuln.location.lineStart}-{vuln.location.lineEnd} · {reportLang === 'cn' ? '函数' : 'fn'} {vuln.location.functionName}</p>
                             {vuln.location.codeSnippet && (
                               <div className="mt-2 relative">
-                                <pre className="text-xs text-emerald-400 bg-slate-900 p-3 rounded-lg overflow-x-auto font-mono border border-slate-700/30">
+                                <pre className="text-sm text-emerald-400 bg-slate-900 p-4 rounded-lg overflow-x-auto font-mono border border-slate-700/30">
                                   <code>{vuln.location.codeSnippet}</code>
                                 </pre>
-                                <button onClick={() => copyCode(vuln.location.codeSnippet, vuln.id || String(i))} className="absolute top-2 right-2 px-2 py-1 bg-slate-800 border border-slate-600/50 rounded text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1">
+                                <button onClick={() => copyCode(vuln.location.codeSnippet, vuln.id || String(i))} className="absolute top-2 right-2 px-2.5 py-1.5 bg-slate-800 border border-slate-600/50 rounded text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1">
                                   {copiedId === (vuln.id || String(i)) ? <><Check className="w-3 h-3" /> 已复制</> : <><Copy className="w-3 h-3" /> 复制</>}
                                 </button>
                               </div>
                             )}
                           </div>
                         )}
-                        <div><label className="text-xs text-slate-500">{rl.attackVector}</label><p className="text-sm text-slate-300 mt-1">{vuln.attackVector}</p></div>
-                        <div><label className="text-xs text-slate-500">{rl.impact}</label><p className="text-sm text-slate-300 mt-1">{vuln.impact}</p></div>
+                        <div><label className="text-sm text-slate-500">{rl.attackVector}</label><p className="text-base text-slate-300 mt-1">{vuln.attackVector}</p></div>
+                        <div><label className="text-sm text-slate-500">{rl.impact}</label><p className="text-base text-slate-300 mt-1">{vuln.impact}</p></div>
                         {vuln.matchedCases && vuln.matchedCases.length > 0 && (
-                          <div><label className="text-xs text-slate-500">{rl.matchedCases}</label>
+                          <div><label className="text-sm text-slate-500">{rl.matchedCases}</label>
                             <div className="mt-1 space-y-1">
                               {vuln.matchedCases.map((mc, j) => (
-                                <div key={j} className="flex items-center gap-2 text-sm">
+                                <div key={j} className="flex items-center gap-2 text-base">
                                   <span className="text-cyan-400">{mc.caseId}</span>
                                   <span className="text-slate-400">{reportLang === 'cn' ? '相似度' : 'Similarity'} {(mc.similarity * 100).toFixed(0)}%</span>
                                   <span className="text-slate-500">- {mc.matchReason}</span>
@@ -2193,7 +2110,7 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
                             </div>
                           </div>
                         )}
-                        <div><label className="text-xs text-slate-500">{rl.recommendation}</label><p className="text-sm text-emerald-300 mt-1">{vuln.recommendation}</p></div>
+                        <div><label className="text-sm text-slate-500">{rl.recommendation}</label><p className="text-base text-emerald-300 mt-1">{vuln.recommendation}</p></div>
                       </div>
                     </motion.div>
                   )}
@@ -2209,8 +2126,8 @@ function ReportPage({ reportId, onBack }: { reportId: string; onBack: () => void
 
       {/* Report Tab */}
       {activeTab === 'report' && (
-        <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-6">
-          <div className="prose prose-invert prose-sm max-w-none">
+        <div className="bg-slate-900/50 border border-slate-700/50 rounded-2xl p-8">
+          <div className="prose prose-invert prose-base max-w-none">
             {renderMarkdown(report.reportMarkdown || rl.reportEmpty)}
           </div>
         </div>
